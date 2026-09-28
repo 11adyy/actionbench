@@ -70,7 +70,7 @@ class Store:
         );
         CREATE TABLE IF NOT EXISTS generated_packages (
           campaign TEXT NOT NULL REFERENCES campaigns(campaign), family TEXT NOT NULL, replica INTEGER NOT NULL,
-          condition TEXT NOT NULL CHECK(condition IN ('skill','action')), package_hash TEXT NOT NULL,
+          condition TEXT NOT NULL CHECK(condition IN ('skill','skill_script','action')), package_hash TEXT NOT NULL,
           path TEXT NOT NULL, creation_episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
           created_at TEXT NOT NULL, PRIMARY KEY(campaign,family,replica,condition)
         );
@@ -135,6 +135,9 @@ class Store:
 
     def package(self, campaign: str, family: str, replica: int, condition: str):
         return self.conn.execute("SELECT * FROM generated_packages WHERE campaign=? AND family=? AND replica=? AND condition=?", (campaign, family, replica, condition)).fetchone()
+
+    def evaluation(self, episode_id: str):
+        return self.conn.execute("SELECT * FROM evaluations WHERE episode_id=?", (episode_id,)).fetchone()
 
     def request_for(self, episode_id: str, request_key: str, request_hash: str):
         return self.conn.execute("SELECT * FROM requests WHERE episode_id=? AND request_key=? AND request_hash=?", (episode_id, request_key, request_hash)).fetchone()

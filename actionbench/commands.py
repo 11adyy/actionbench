@@ -78,7 +78,7 @@ def _create_packages(config, store, manifest: Manifest) -> None:
     for family in manifest.families:
         dev_tasks = [task for task in family.tasks if task.split == "development"]
         for replica in range(config.replicas):
-            for kind in ("skill", "action"):
+            for kind in ("skill", "skill_script", "action"):
                 if store.package(config.campaign, family.id, replica, kind): continue
                 episode = _creation_episode(config, family.id, replica, kind)
                 store.create_episode(episode, config.campaign, f"creation:{family.id}:{kind}:{replica}", family.id, kind, replica)
@@ -87,14 +87,14 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                 try:
                     final_path = None; final_hash = None
                     base_skill_md = None
-                    if kind == "action":
+                    if kind in {"skill_script", "action"}:
                         paired = store.package(config.campaign, family.id, replica, "skill")
                         if not paired: raise ActionBenchError("Create the paired conventional skill before its action package")
                         base_skill_md = (Path(paired["path"]) / "SKILL.md").read_text()
                     for revision in range(3):
                         target = base / family.id / str(replica) / kind / f"v{revision}"
                         package_hash = create_package(broker, episode, family, replica, kind, target, feedback, base_skill_md)
-                        feedback = _validate_on_development(episode, dev_tasks, agent, kind, target)
+                        feedback = _validate_on_development(config, store, family.id, replica, revision, dev_tasks, agent, kind, target)
                         final_path, final_hash = target, package_hash
                         if all(item["primary"] >= 1 for item in feedback): break
                     assert final_path and final_hash
@@ -106,11 +106,36 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                     store.set_episode(episode, "failed", error=str(exc), retryable=True); raise
 
 
-def _validate_on_development(episode: str, tasks, agent: AgentRunner, kind: str, package: Path) -> list[dict]:
+def _development_episode(config, family: str, kind: str, replica: int, revision: int, task_id: str) -> str:
+    return _id(config.campaign, "creation-development", family, kind, replica, revision, task_id)
+
+
+def _validate_on_development(config, store, family: str, replica: int, revision: int, tasks, agent: AgentRunner, kind: str, package: Path) -> list[dict]:
+    """Evaluate each package revision in its own durable, budgeted episode."""
     feedback = []
     for task in tasks:
-        answer = agent.run(episode, task.public_input.read_text(), kind, package if kind == "skill" else None, package if kind == "action" else None)
-        score = grade(task, answer)
+        episode = _development_episode(config, family, kind, replica, revision, task.id)
+        store.create_episode(episode, config.campaign, f"creation-dev:{family}:{kind}:{replica}:{revision}:{task.id}", family, kind, replica)
+        existing = store.episode(episode)
+        saved = store.evaluation(episode)
+        if existing["status"] == "completed" and saved:
+            score = json.loads(saved["score_json"])
+            feedback.append({"task_id": task.id, "primary": score["primary"], "details": score})
+            continue
+        if existing["status"] == "failed" and not existing["retryable"]:
+            raise ActionBenchError(f"Development evaluation {episode} needs manual resolution")
+        store.set_episode(episode, "running")
+        try:
+            answer = agent.run(episode, task.public_input.read_text(), kind, package if kind in {"skill", "skill_script"} else None, package if kind == "action" else None)
+            score = grade(task, answer)
+            store.save_evaluation(episode, task.family, score)
+            store.set_episode(episode, "completed", retryable=False)
+        except UnknownProviderOutcome as exc:
+            store.set_episode(episode, "failed", error=str(exc), retryable=False)
+            raise
+        except Exception as exc:
+            store.set_episode(episode, "failed", error=str(exc), retryable=True)
+            raise
         feedback.append({"task_id": task.id, "primary": score["primary"], "details": score})
     return feedback
 
@@ -119,9 +144,10 @@ def _plan_test_episodes(config, store, manifest: Manifest) -> None:
     for task in manifest.test_tasks:
         for replica in range(config.replicas):
             conventional = store.package(config.campaign, task.family, replica, "skill")
+            scripts = store.package(config.campaign, task.family, replica, "skill_script")
             actions = store.package(config.campaign, task.family, replica, "action")
-            if not conventional or not actions: raise ActionBenchError(f"Missing packages for {task.family} replica {replica}; run create-skills")
-            packages = {"plain": None, "skill": conventional["package_hash"], "improvised": conventional["package_hash"], "action": actions["package_hash"]}
+            if not conventional or not scripts or not actions: raise ActionBenchError(f"Missing packages for {task.family} replica {replica}; run create-skills")
+            packages = {"plain": None, "skill": conventional["package_hash"], "skill_script": scripts["package_hash"], "improvised": conventional["package_hash"], "action": actions["package_hash"]}
             for condition in config.conditions:
                 episode_id = _id(config.campaign, "test", task.id, condition, replica, packages[condition] or "plain")
                 store.create_episode(episode_id, config.campaign, task.id, task.family, condition, replica, packages[condition])
@@ -133,8 +159,9 @@ def _execute(config, store, manifest: Manifest) -> None:
         task = tasks.get(row["task_id"])
         if not task: continue
         conventional = store.package(config.campaign, task.family, row["replica"], "skill")
+        scripts = store.package(config.campaign, task.family, row["replica"], "skill_script")
         actions = store.package(config.campaign, task.family, row["replica"], "action")
-        skill_dir = Path(conventional["path"]) if row["condition"] in {"skill", "improvised"} else None
+        skill_dir = Path(conventional["path"]) if row["condition"] in {"skill", "improvised"} else (Path(scripts["path"]) if row["condition"] == "skill_script" else None)
         action_dir = Path(actions["path"]) if row["condition"] == "action" else None
         store.set_episode(row["episode_id"], "running")
         try:

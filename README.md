@@ -34,7 +34,9 @@ Every campaign has an immutable configuration hash. A changed configuration requ
 
 ## Conditions
 
-Every condition receives the same task, model, code interpreter, filesystem, container limits, and episode budget. `skill` receives a conventionally generated skill. `improvised` receives that same skill and may write an LLM-calling program during the episode. `action` receives a separately generated, frozen package of reusable actions. This isolates reusable prepared actions from ordinary code execution and from improvised programmatic calls.
+Every condition receives the same task, model, code interpreter, filesystem, container limits, and episode budget. `skill` receives a conventionally generated skill. `skill_script` receives the exact same skill text plus frozen, deterministic reusable procedures. `improvised` receives that same skill and may write an LLM-calling program during the episode. `action` receives the exact same skill text plus frozen reusable procedures that can request the model only through the harness. Each procedure exposes an identifier, description, and JSON input schema to the agent.
+
+This gives three direct comparisons: `action - skill` tests the full proposal; `action - skill_script` isolates controlled model calls inside reusable procedures from reusable deterministic code; `action - improvised` tests preparation and reuse against writing an equivalent model-calling program during an episode.
 
 ## Data contract
 
@@ -42,4 +44,6 @@ Every condition receives the same task, model, code interpreter, filesystem, con
 
 ## Safety and recovery
 
-Generated code runs with no network, credentials, or Docker socket, under resource limits and in a persistent per-step workspace. The broker alone owns API credentials. A completed request can be reused only when its complete payload hash matches; a changed prompt produces a new request. Unknown provider outcomes are never retried automatically.
+Generated code runs with no network, credentials, or Docker socket, under resource limits and in a persistent per-step workspace. The broker alone owns API credentials. A completed request can be reused only when its complete payload hash matches; a changed prompt produces a new request. Unknown provider outcomes are never retried automatically. Package writes use an atomic staging directory; each development evaluation has its own durable episode and budget, so a stopped creation run can resume without silently reusing a shared budget.
+
+The report keeps terminal execution failures as zero, keeps in-progress work out of quality estimates, resamples benchmark tasks rather than treating replicas of the same task as independent, and reports package-creation cost together with a break-even reuse estimate.

@@ -8,7 +8,7 @@ from .errors import ActionBenchError
 from .runner import ActionRunner
 
 
-AGENT_INSTRUCTIONS = """Solve the task using only the provided context and tool observations. Reply with exactly one JSON object. Every condition has `code`, which executes a Python JSONL program without network or model access; its code must read one line from stdin and emit {\"kind\":\"result\",\"output\":object}. Use {\"type\":\"code\",\"code\":string,\"input\":object} to invoke it. Use {\"type\":\"final\",\"answer\":string} to deliver the benchmark answer. If the catalog lists actions, use {\"type\":\"action\",\"action_id\":string,\"input\":object}. Only if `llm_code` is listed may you use {\"type\":\"llm_code\",\"code\":string,\"input\":object}; that program imports ActionContext from action_sdk and calls ctx.emit. Never invent tool results."""
+AGENT_INSTRUCTIONS = """Solve the task using only the provided context and tool observations. Reply with exactly one JSON object. Every condition has `code`, which executes a Python JSONL program without network or model access; its code must read one line from stdin and emit {\"kind\":\"result\",\"output\":object}. Use {\"type\":\"code\",\"code\":string,\"input\":object} to invoke it. Use {\"type\":\"final\",\"answer\":string} to deliver the benchmark answer. If the catalog lists reusable procedures, follow each procedure's description and input_schema, then use {\"type\":\"procedure\",\"procedure_id\":string,\"input\":object}. Only if `llm_code` is listed may you use {\"type\":\"llm_code\",\"code\":string,\"input\":object}; that program imports ActionContext from action_sdk and calls ctx.emit. Never invent tool results."""
 
 
 class AgentRunner:
@@ -16,14 +16,18 @@ class AgentRunner:
         self.broker, self.tools = broker, tools
 
     def run(self, episode_id: str, task_input: str, condition: str, skill_dir: Path | None, action_dir: Path | None) -> str:
-        skill = skill_dir.joinpath("SKILL.md").read_text() if skill_dir else ""
+        package_dir = action_dir or skill_dir
+        skill = package_dir.joinpath("SKILL.md").read_text() if package_dir else ""
         catalog = []
-        if action_dir:
-            catalog = sorted(json.loads(item.read_text())["id"] for item in action_dir.glob("actions/*/action.json"))
+        if package_dir:
+            catalog = sorted(
+                json.loads(item.read_text())
+                for item in package_dir.glob("procedures/*/procedure.json")
+            )
         enabled = ["code"]
         if condition == "improvised": enabled.append("llm_code")
-        if condition == "action": enabled.append("action")
-        context = {"task": task_input, "skill": skill, "condition": condition, "tools": enabled, "actions": catalog, "observations": []}
+        if condition in {"skill_script", "action"}: enabled.append("procedure")
+        context = {"task": task_input, "skill": skill, "condition": condition, "tools": enabled, "procedures": catalog, "observations": []}
         for index in range(self.broker.config.budget.max_llm_calls):
             result = self.broker.call(episode_id, f"agent-decision-{index}", AGENT_INSTRUCTIONS, json.dumps(context, sort_keys=True), min(2048, self.broker.config.budget.max_output_tokens))
             try: decision = json.loads(result.text)
@@ -38,9 +42,11 @@ class AgentRunner:
             if kind == "llm_code" and condition == "improvised":
                 output = self.tools.run_ephemeral_llm_program(episode_id, f"llm-code-{index}", str(decision.get("code", "")), input_data)
                 context["observations"].append({"tool": "llm_code", "output": output}); continue
-            if kind == "action" and condition == "action" and decision.get("action_id") in catalog and action_dir:
-                root = action_dir / "actions" / decision["action_id"]
-                output = self.tools.run(episode_id, root, f"action-{index}", input_data)
-                context["observations"].append({"tool": "action", "action_id": decision["action_id"], "output": output}); continue
+            procedure_id = decision.get("procedure_id")
+            known = {item.get("id") for item in catalog}
+            if kind == "procedure" and condition in {"skill_script", "action"} and procedure_id in known and package_dir:
+                root = package_dir / "procedures" / procedure_id
+                output = self.tools.run(episode_id, root, f"procedure-{index}", input_data, allow_llm=condition == "action")
+                context["observations"].append({"tool": "procedure", "procedure_id": procedure_id, "output": output}); continue
             raise ActionBenchError(f"Unavailable or malformed tool request: {decision}")
         raise ActionBenchError("Agent exhausted its call budget without a final answer")

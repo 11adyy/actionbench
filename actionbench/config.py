@@ -51,9 +51,10 @@ class Config:
 
     @property
     def db_path(self) -> Path:
-        # The original prototype used incompatible request identities. A separate
-        # ledger avoids corrupting an in-progress v1 result during the upgrade.
-        return self.artifact_root / "actionbench-v2.sqlite3"
+        # v3 adds a deterministic-script baseline and a new package ledger.  A
+        # separate ledger prevents an in-progress earlier design from being
+        # interpreted as a result from this different experiment.
+        return self.artifact_root / "actionbench-v3.sqlite3"
 
 
 def _required(mapping: dict, key: str):
@@ -90,8 +91,8 @@ def load_config(path: str | Path) -> Config:
     )
     if not cfg.campaign or cfg.replicas < 1 or cfg.budget.usd <= 0:
         raise ConfigurationError("campaign, replicas, and budget.usd must be positive")
-    if set(cfg.conditions) != {"plain", "skill", "improvised", "action"}:
-        raise ConfigurationError("conditions must contain plain, skill, improvised, and action exactly")
+    if set(cfg.conditions) != {"plain", "skill", "skill_script", "improvised", "action"}:
+        raise ConfigurationError("conditions must contain plain, skill, skill_script, improvised, and action exactly")
     return cfg
 
 

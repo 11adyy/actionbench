@@ -66,8 +66,8 @@ class ActionRunner:
         self.config, self.broker = config, broker
         self.container = ContainerRunner(config, broker)
 
-    def run(self, episode_id: str, action_dir: Path, invocation_key: str, input_data: dict) -> dict:
-        manifest = json.loads((action_dir / "action.json").read_text())
+    def run(self, episode_id: str, action_dir: Path, invocation_key: str, input_data: dict, *, allow_llm: bool) -> dict:
+        manifest = json.loads((action_dir / "procedure.json").read_text())
         action_id, command = manifest.get("id"), manifest.get("command")
         if not isinstance(action_id, str) or not isinstance(command, list): raise ActionBenchError("Invalid frozen action manifest")
         input_hash = hashlib.sha256(json.dumps(input_data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -78,7 +78,7 @@ class ActionRunner:
         if run["state"] == "unknown_outcome": raise ActionBenchError(f"Action run {run_id} requires manual review")
         self.broker.store.set_action_run(run_id, "running")
         try:
-            output = self.container.execute(episode_id, run_id, workspace, command, input_data, action_dir, allow_llm=True)
+            output = self.container.execute(episode_id, run_id, workspace, command, input_data, action_dir, allow_llm=allow_llm)
             self.broker.store.set_action_run(run_id, "completed", output=output)
             return output
         except Exception as exc:
@@ -93,8 +93,8 @@ class ActionRunner:
         (root / "main.py").write_text(code)
         from . import action_sdk
         (root / "action_sdk.py").write_text(Path(action_sdk.__file__).read_text())
-        (root / "action.json").write_text(json.dumps({"id": f"improvised-{code_hash}", "command": ["python", "/action/main.py"]}))
-        return self.run(episode_id, root, invocation_key, input_data)
+        (root / "procedure.json").write_text(json.dumps({"id": f"improvised-{code_hash}", "description": "Ephemeral model-written LLM procedure.", "input_schema": {"type": "object"}, "command": ["python", "/action/main.py"]}))
+        return self.run(episode_id, root, invocation_key, input_data, allow_llm=True)
 
     def run_plain_program(self, episode_id: str, invocation_key: str, code: str, input_data: dict) -> dict:
         if "llm_request" in code or "action_sdk" in code: raise ActionBenchError("Plain code tool cannot access the LLM protocol")
@@ -102,4 +102,4 @@ class ActionRunner:
         root.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256(f"{invocation_key}|{code}".encode()).hexdigest()[:16]
         program = root / f"{digest}.py"; program.write_text(code)
-        return self.container.execute(episode_id, f"tool-{digest}", root, ["python", f"/workspace/tools/{digest}.py"], input_data, allow_llm=False)
+        return self.container.execute(episode_id, f"tool-{digest}", root, ["python", f"/workspace/{digest}.py"], input_data, allow_llm=False)

@@ -14,5 +14,5 @@
   "dataset_root": "data",
   "artifact_root": "artifacts",
   "replicas": 3,
-  "conditions": ["plain", "skill", "improvised", "action"]
+  "conditions": ["plain", "skill", "skill_script", "improvised", "action"]
 }
