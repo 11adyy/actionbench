@@ -91,7 +91,22 @@ class Broker:
                 return ModelResult(self._text(raw), raw, existing["provider_request_id"], existing["input_tokens"], existing["cached_input_tokens"], existing["output_tokens"], existing["actual_usd"])
             if existing["state"] == "unknown_outcome":
                 raise UnknownProviderOutcome(f"Request {request_key} has unknown outcome and must be manually resolved")
-            raise UnknownProviderOutcome(f"Request {request_key} was interrupted in state {existing['state']}")
+            if existing["state"] == "submitted":
+                self.store.unknown_request(existing["request_id"], "Coordinator restarted after request submission")
+                raise UnknownProviderOutcome(f"Request {request_key} was submitted before interruption and is unknown")
+            if existing["state"] == "reserved":
+                # Reservation is durably committed before the API call. It is safe
+                # to continue it because no provider request has been sent yet.
+                request_id = existing["request_id"]
+                self.store.mark_submitted(request_id)
+                try:
+                    raw = self.client.request(payload)
+                except UnknownProviderOutcome as exc:
+                    self.store.unknown_request(request_id, str(exc)); raise
+                usage = self._usage(raw); actual = self._cost(usage)
+                self.store.complete_request(request_id, raw.get("id"), raw, usage, actual)
+                return ModelResult(self._text(raw), raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual)
+            raise UnknownProviderOutcome(f"Request {request_key} has unsupported stored state {existing['state']}")
         if max_output_tokens < 1 or max_output_tokens > self.config.budget.max_output_tokens:
             raise BudgetExceeded("Requested output tokens exceed the campaign limit")
         estimated_input = max(1, (len(instructions) + len(input_text) + 3) // 4)

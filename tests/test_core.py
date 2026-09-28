@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 
 from actionbench.config import load_config
+from actionbench.broker import Broker
+from actionbench.errors import UnknownProviderOutcome
 from actionbench.report import build_report
 from actionbench.store import Store
 
@@ -59,6 +61,28 @@ class CoreTests(unittest.TestCase):
             second = store.create_action_run("two", "e", "invoke-0", "extract", "input-b", "/tmp/b")
             self.assertEqual(first["action_run_id"], "one")
             self.assertEqual(second["action_run_id"], "two")
+
+    def test_reserved_request_can_resume_without_duplicate_reservation(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
+            payload = {"model": config.provider.model, "instructions": "i", "input": "x", "max_output_tokens": 4, "store": False}
+            import hashlib
+            digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            store.reserve_request("r", "e", "k", digest, payload, 0, 1)
+            broker = Broker(config, store)
+            broker.client = type("Client", (), {"request": lambda self, _: {"id": "p", "output_text": "ok", "usage": {"input_tokens": 1, "output_tokens": 1}}})()
+            self.assertEqual(broker.call("e", "k", "i", "x", 4).text, "ok")
+            self.assertEqual(store.request_for("e", "k", digest)["state"], "completed")
+
+    def test_submitted_request_becomes_manual_review_on_restart(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
+            payload = {"model": config.provider.model, "instructions": "i", "input": "x", "max_output_tokens": 4, "store": False}
+            import hashlib
+            digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            store.reserve_request("r", "e", "k", digest, payload, 0, 1); store.mark_submitted("r")
+            with self.assertRaises(UnknownProviderOutcome): Broker(config, store).call("e", "k", "i", "x", 4)
+            self.assertEqual(store.request_for("e", "k", digest)["state"], "unknown_outcome")
 
 
 if __name__ == "__main__": unittest.main()
