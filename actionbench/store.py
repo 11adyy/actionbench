@@ -54,7 +54,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS requests (
           request_id TEXT PRIMARY KEY, episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
           step_id TEXT NOT NULL, provider_request_id TEXT, state TEXT NOT NULL,
-          request_json TEXT NOT NULL, response_json TEXT, reserved_usd REAL NOT NULL,
+          request_json TEXT NOT NULL, response_json TEXT, reserved_usd REAL NOT NULL, reserved_input_tokens INTEGER NOT NULL DEFAULT 0,
           actual_usd REAL, input_tokens INTEGER, cached_input_tokens INTEGER, output_tokens INTEGER,
           created_at TEXT NOT NULL, completed_at TEXT, UNIQUE(episode_id, step_id)
         );
@@ -72,6 +72,10 @@ class Store:
           PRIMARY KEY(campaign, family, replica)
         );
         """)
+        try:
+            self.conn.execute("ALTER TABLE requests ADD COLUMN reserved_input_tokens INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
 
     def ensure_campaign(self, config: Config) -> None:
         payload = config.source_path.read_text()
@@ -124,10 +128,16 @@ class Store:
     def request_for_step(self, episode_id: str, step_id: str):
         return self.conn.execute("SELECT * FROM requests WHERE episode_id=? AND step_id=?", (episode_id, step_id)).fetchone()
 
-    def reserve_request(self, request_id: str, episode_id: str, step_id: str, request_json: dict, reserved_usd: float) -> None:
+    def reserve_request(self, request_id: str, episode_id: str, step_id: str, request_json: dict, reserved_usd: float, reserved_input_tokens: int) -> None:
         with self.tx() as conn:
-            conn.execute("INSERT INTO requests(request_id,episode_id,step_id,state,request_json,reserved_usd,created_at) VALUES(?,?,?,'reserved',?,?,?)",
-                         (request_id, episode_id, step_id, json.dumps(request_json, sort_keys=True), reserved_usd, now()))
+            conn.execute("INSERT INTO requests(request_id,episode_id,step_id,state,request_json,reserved_usd,reserved_input_tokens,created_at) VALUES(?,?,?,'reserved',?,?,?,?)",
+                         (request_id, episode_id, step_id, json.dumps(request_json, sort_keys=True), reserved_usd, reserved_input_tokens, now()))
+
+    def episode_limits(self, episode_id: str) -> tuple[int, int, int]:
+        row = self.conn.execute("""SELECT COUNT(*) calls, COALESCE(SUM(COALESCE(input_tokens,reserved_input_tokens)),0) inputs,
+                                 COALESCE(SUM(COALESCE(output_tokens,0)),0) outputs FROM requests
+                                 WHERE episode_id=? AND state IN ('reserved','submitted','completed','unknown_outcome')""", (episode_id,)).fetchone()
+        return int(row["calls"]), int(row["inputs"]), int(row["outputs"])
 
     def mark_submitted(self, request_id: str) -> None:
         self.conn.execute("UPDATE requests SET state='submitted' WHERE request_id=? AND state='reserved'", (request_id,))

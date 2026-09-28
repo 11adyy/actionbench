@@ -54,9 +54,9 @@ class Broker:
         self.config, self.store = config, store
         self.client = OpenAIResponsesClient(config)
 
-    def estimate_usd(self, max_output_tokens: int) -> float:
+    def estimate_usd(self, input_tokens: int, max_output_tokens: int) -> float:
         p = self.config.provider
-        return (self.config.budget.max_input_tokens * p.input_usd_per_million + max_output_tokens * p.output_usd_per_million) / 1_000_000
+        return (input_tokens * p.input_usd_per_million + max_output_tokens * p.output_usd_per_million) / 1_000_000
 
     def _usage(self, raw: dict) -> dict[str, int]:
         usage = raw.get("usage") or {}
@@ -90,12 +90,20 @@ class Broker:
             raise UnknownProviderOutcome(f"Request {step_id} was interrupted in state {existing['state']}")
         if max_output_tokens < 1 or max_output_tokens > self.config.budget.max_output_tokens:
             raise BudgetExceeded("Requested output tokens exceed the campaign limit")
-        reserve = self.estimate_usd(max_output_tokens)
+        estimated_input = max(1, (len(instructions) + len(input_text) + 3) // 4)
+        call_count, used_input, used_output = self.store.episode_limits(episode_id)
+        if call_count >= self.config.budget.max_llm_calls:
+            raise BudgetExceeded("Episode call limit would be exceeded")
+        if used_input + estimated_input > self.config.budget.max_input_tokens:
+            raise BudgetExceeded("Episode input-token budget would be exceeded")
+        if used_output + max_output_tokens > self.config.budget.max_output_tokens:
+            raise BudgetExceeded("Episode output-token budget would be exceeded")
+        reserve = self.estimate_usd(estimated_input, max_output_tokens)
         if self.store.campaign_spend(self.config.campaign) + reserve > self.config.budget.usd:
             raise BudgetExceeded("Campaign dollar budget would be exceeded")
         request_id = str(uuid.uuid4())
         payload = {"model": self.config.provider.model, "instructions": instructions, "input": input_text, "max_output_tokens": max_output_tokens, "store": False}
-        self.store.reserve_request(request_id, episode_id, step_id, payload, reserve)
+        self.store.reserve_request(request_id, episode_id, step_id, payload, reserve, estimated_input)
         self.store.mark_submitted(request_id)
         try:
             raw = self.client.request(payload)

@@ -24,9 +24,16 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); cfg = self.config(root); store = Store(cfg.db_path); store.ensure_campaign(cfg)
             store.create_episode("e", cfg.campaign, "t", "f", "plain", 0)
-            store.reserve_request("r", "e", "s", {"x": 1}, .2); store.mark_submitted("r")
+            store.reserve_request("r", "e", "s", {"x": 1}, .2, 10); store.mark_submitted("r")
             store.complete_request("r", "p", {"output_text": "OK"}, {"input_tokens": 1, "cached_input_tokens": 0, "output_tokens": 1}, .01)
             self.assertEqual(store.request_for_step("e", "s")["state"], "completed")
+
+    def test_episode_limits_include_reserved_request(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); cfg = self.config(root); store = Store(cfg.db_path); store.ensure_campaign(cfg)
+            store.create_episode("e", cfg.campaign, "t", "f", "plain", 0)
+            store.reserve_request("r", "e", "s", {}, .1, 77)
+            self.assertEqual(store.episode_limits("e"), (1, 77, 0))
 
 
 if __name__ == "__main__":
