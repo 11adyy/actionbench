@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from collections import defaultdict
+
+from .statistics import paired_bootstrap
 
 
 def build_report(config, store) -> dict:
-    rows = store.conn.execute("""SELECT e.task_id,e.family,e.condition,e.status,e.error,ev.score_json,
+    rows = store.conn.execute("""SELECT e.task_id,e.family,e.condition,e.replica,e.status,e.error,ev.score_json,
                               COALESCE(SUM(COALESCE(r.actual_usd,r.reserved_usd)),0) cost
                               FROM episodes e LEFT JOIN evaluations ev ON ev.episode_id=e.episode_id
                               LEFT JOIN requests r ON r.episode_id=e.episode_id WHERE e.campaign=? GROUP BY e.episode_id""", (config.campaign,)).fetchall()
@@ -29,4 +32,24 @@ def build_report(config, store) -> dict:
             "primary_with_failures_as_zero": scored_total / group["planned"] if group["planned"] else None,
             "mean_usd_per_planned_episode": sum(group["costs"]) / group["planned"] if group["planned"] else 0,
         }
+    by_cell = {}
+    for row in rows:
+        if row["task_id"].startswith("creation:"): continue
+        score = 0.0
+        if row["status"] == "completed" and row["score_json"]: score = float(json.loads(row["score_json"])["primary"])
+        by_cell[(row["family"], row["task_id"], row["replica"], row["condition"])] = (score, float(row["cost"]))
+    comparisons = {}
+    for baseline in ("skill", "improvised"):
+        grouped = defaultdict(list)
+        for (family, task_id, replica, condition), action in by_cell.items():
+            if condition != "action": continue
+            other = by_cell.get((family, task_id, replica, baseline))
+            if other: grouped[family].append((action, other))
+        for family, pairs in grouped.items():
+            salt = int(hashlib.sha256(f"{config.campaign}|{family}|{baseline}".encode()).hexdigest()[:8], 16)
+            comparisons[f"{family}:action_minus_{baseline}"] = {
+                "quality": paired_bootstrap([(a[0], b[0]) for a, b in pairs], salt),
+                "usd": paired_bootstrap([(a[1], b[1]) for a, b in pairs], salt + 1),
+            }
+    output["paired_comparisons"] = comparisons
     return output

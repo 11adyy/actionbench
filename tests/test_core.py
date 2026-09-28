@@ -35,6 +35,16 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(group["primary_with_failures_as_zero"], .1)
             self.assertEqual(group["execution_failed"], 9)
 
+    def test_report_pairs_action_against_skill_by_task_and_replica(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            for condition, score in (("skill", 0), ("action", 1)):
+                episode = f"{condition}-e"; store.create_episode(episode, config.campaign, "task", "code", condition, 0, condition)
+                store.set_episode(episode, "completed", retryable=False); store.save_evaluation(episode, "code", {"primary": score})
+            comparison = build_report(config, store)["paired_comparisons"]["code:action_minus_skill"]
+            self.assertEqual(comparison["quality"]["n"], 1)
+            self.assertEqual(comparison["quality"]["mean_delta"], 1)
+
     def test_resume_includes_retryable_failures(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("retry", config.campaign, "t", "f", "plain", 0)
