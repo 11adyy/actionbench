@@ -81,6 +81,11 @@ class Store:
         self.conn.execute("INSERT INTO events(episode_id,kind,payload_json,created_at) VALUES(?,?,?,?)",
                           (episode_id, kind, json.dumps(payload, sort_keys=True), now()))
 
+    def create_episode(self, episode_id: str, campaign: str, task_id: str, family: str, condition: str, replica: int, skill_hash: str | None = None) -> None:
+        stamp = now()
+        self.conn.execute("""INSERT OR IGNORE INTO episodes(episode_id,campaign,task_id,family,condition,replica,skill_hash,status,created_at,updated_at)
+                          VALUES(?,?,?,?,?,?,?,'queued',?,?)""", (episode_id, campaign, task_id, family, condition, replica, skill_hash, stamp, stamp))
+
     def campaign_status(self, campaign: str) -> dict:
         campaign_row = self.conn.execute("SELECT * FROM campaigns WHERE campaign=?", (campaign,)).fetchone()
         if not campaign_row:
@@ -88,3 +93,29 @@ class Store:
         counts = self.conn.execute("SELECT status,count(*) n FROM episodes WHERE campaign=? GROUP BY status", (campaign,)).fetchall()
         spend = self.conn.execute("SELECT COALESCE(SUM(COALESCE(actual_usd,reserved_usd)),0) v FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=?", (campaign,)).fetchone()["v"]
         return {"campaign": campaign, "exists": True, "status": campaign_row["status"], "episodes": {r["status"]: r["n"] for r in counts}, "accounted_usd": spend}
+
+    def campaign_spend(self, campaign: str) -> float:
+        row = self.conn.execute("SELECT COALESCE(SUM(COALESCE(actual_usd,reserved_usd)),0) v FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=?", (campaign,)).fetchone()
+        return float(row["v"])
+
+    def request_for_step(self, episode_id: str, step_id: str):
+        return self.conn.execute("SELECT * FROM requests WHERE episode_id=? AND step_id=?", (episode_id, step_id)).fetchone()
+
+    def reserve_request(self, request_id: str, episode_id: str, step_id: str, request_json: dict, reserved_usd: float) -> None:
+        with self.tx() as conn:
+            conn.execute("INSERT INTO requests(request_id,episode_id,step_id,state,request_json,reserved_usd,created_at) VALUES(?,?,?,'reserved',?,?,?)",
+                         (request_id, episode_id, step_id, json.dumps(request_json, sort_keys=True), reserved_usd, now()))
+
+    def mark_submitted(self, request_id: str) -> None:
+        self.conn.execute("UPDATE requests SET state='submitted' WHERE request_id=? AND state='reserved'", (request_id,))
+
+    def complete_request(self, request_id: str, provider_request_id: str | None, response: dict, usage: dict, actual_usd: float) -> None:
+        with self.tx() as conn:
+            conn.execute("""UPDATE requests SET state='completed', provider_request_id=?, response_json=?, actual_usd=?,
+                         input_tokens=?, cached_input_tokens=?, output_tokens=?, completed_at=? WHERE request_id=? AND state='submitted'""",
+                         (provider_request_id, json.dumps(response, sort_keys=True), actual_usd, usage.get("input_tokens", 0),
+                          usage.get("cached_input_tokens", 0), usage.get("output_tokens", 0), now(), request_id))
+
+    def unknown_request(self, request_id: str, detail: str) -> None:
+        self.conn.execute("UPDATE requests SET state='unknown_outcome', completed_at=? WHERE request_id=? AND state='submitted'", (now(), request_id))
+        self.event(None, "unknown_provider_outcome", {"request_id": request_id, "detail": detail})
