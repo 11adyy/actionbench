@@ -86,9 +86,14 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                 feedback: list[dict] = []
                 try:
                     final_path = None; final_hash = None
+                    base_skill_md = None
+                    if kind == "action":
+                        paired = store.package(config.campaign, family.id, replica, "skill")
+                        if not paired: raise ActionBenchError("Create the paired conventional skill before its action package")
+                        base_skill_md = (Path(paired["path"]) / "SKILL.md").read_text()
                     for revision in range(3):
                         target = base / family.id / str(replica) / kind / f"v{revision}"
-                        package_hash = create_package(broker, episode, family, replica, kind, target, feedback)
+                        package_hash = create_package(broker, episode, family, replica, kind, target, feedback, base_skill_md)
                         feedback = _validate_on_development(episode, dev_tasks, agent, kind, target)
                         final_path, final_hash = target, package_hash
                         if all(item["primary"] >= 1 for item in feedback): break

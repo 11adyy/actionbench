@@ -12,7 +12,7 @@ from .manifest import Family
 
 BASE = """You create one reusable agent skill for a benchmark family. Return only valid JSON. The skill must give operational instructions that are useful on unseen instances, never answers to test examples. Do not use network, credentials, shell commands, subprocesses, or external packages."""
 SKILL_PROMPT = BASE + """ Return exactly {\"skill_md\": string}. The agent always has a sandboxed Python code tool but no direct model-call tool."""
-ACTION_PROMPT = BASE + """ Return exactly {\"skill_md\": string, \"actions\": array}. Each action has id, code, command. `code` is complete Python using `from action_sdk import ActionContext`; it reads {kind,input} JSON from stdin, creates ActionContext(input['input']), may call ctx.call_llm, then calls ctx.emit(object). `command` must be [\"python\", \"/action/main.py\"]. Actions must be narrow reusable procedures, not an entire agent loop."""
+ACTION_PROMPT = BASE + """ Return exactly {\"skill_md\": string, \"actions\": array}. `skill_md` must reproduce the supplied base skill byte-for-byte. Each action has id, code, command. `code` is complete Python using `from action_sdk import ActionContext`; it reads {kind,input} JSON from stdin, creates ActionContext(input['input']), may call ctx.call_llm, then calls ctx.emit(object). `command` must be [\"python\", \"/action/main.py\"]. Actions must be narrow reusable procedures, not an entire agent loop."""
 
 
 def _decode(text: str, kind: str) -> dict:
@@ -33,12 +33,14 @@ def _validate_action(action: dict) -> None:
     except SyntaxError as exc: raise ActionBenchError(f"Action {action_id} has invalid Python: {exc}") from exc
 
 
-def create_package(broker: Broker, episode_id: str, family: Family, replica: int, kind: str, destination: Path, feedback: list[dict] | None = None) -> str:
+def create_package(broker: Broker, episode_id: str, family: Family, replica: int, kind: str, destination: Path, feedback: list[dict] | None = None, base_skill_md: str | None = None) -> str:
     demos = [{"path": str(path), "content": path.read_text() if path.is_file() else "directory"} for path in family.demonstrations]
-    prompt = json.dumps({"family": family.id, "brief": family.creator_brief, "demonstrations": demos, "replica": replica, "previous_development_feedback": feedback or []}, sort_keys=True)
+    prompt = json.dumps({"family": family.id, "brief": family.creator_brief, "demonstrations": demos, "replica": replica, "base_skill_md": base_skill_md, "previous_development_feedback": feedback or []}, sort_keys=True)
     result = broker.call(episode_id, f"package-{kind}-draft", ACTION_PROMPT if kind == "action" else SKILL_PROMPT, prompt, 4096)
     package = _decode(result.text, kind)
     if kind == "action":
+        if package["skill_md"] != base_skill_md: raise ActionBenchError("Action package changed its paired conventional skill")
+        if not package["actions"]: raise ActionBenchError("Action package must expose at least one action")
         seen = set()
         for action in package["actions"]:
             _validate_action(action)
