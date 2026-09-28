@@ -13,9 +13,10 @@ from .store import Store
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="actionbench")
     subs = p.add_subparsers(dest="command", required=True)
-    for name in ("doctor", "live-check", "status", "datasets", "create-skills", "run", "resume", "freeze", "report"):
+    for name in ("doctor", "live-check", "status", "datasets", "images", "create-skills", "run", "resume", "freeze", "report"):
         child = subs.add_parser(name)
         if name == "datasets": child.add_argument("operation", choices=["prepare"])
+        if name == "images": child.add_argument("operation", choices=["build"])
         child.add_argument("--config", required=True)
         child.add_argument("--manifest")
         child.add_argument("--out")

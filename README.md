@@ -13,6 +13,8 @@ python -m venv .venv
 .venv/bin/pip install -e .
 cp config.example.json experiment.json
 actionbench doctor --config experiment.json
+actionbench images build --config experiment.json
+actionbench datasets prepare --config experiment.json --out manifests/study.json
 actionbench live-check --config experiment.json
 ```
 
@@ -21,11 +23,10 @@ actionbench live-check --config experiment.json
 ## Lifecycle
 
 ```bash
-actionbench datasets prepare --config experiment.json --manifest manifests/pilot.json
-actionbench create-skills --config experiment.json --manifest manifests/pilot.json
-actionbench run --config experiment.json --manifest manifests/pilot.json
+actionbench create-skills --config experiment.json --manifest manifests/study.json
+actionbench run --config experiment.json --manifest manifests/study.json
 actionbench status --config experiment.json
-actionbench resume --config experiment.json --manifest manifests/pilot.json
+actionbench resume --config experiment.json --manifest manifests/study.json
 actionbench report --config experiment.json --out artifacts/report.json
 ```
 
@@ -33,12 +34,12 @@ Every campaign has an immutable configuration hash. A changed configuration requ
 
 ## Conditions
 
-`plain` receives the task and tools. `skill` receives an ordinary generated skill. `improvised` receives the ordinary skill and can write temporary code that calls the broker; nothing survives the task. `action` receives a frozen skill package with generated executable actions. All conditions have the same agent model, tool limits, input data, and episode budget.
+Every condition receives the same task, model, code interpreter, filesystem, container limits, and episode budget. `skill` receives a conventionally generated skill. `improvised` receives that same skill and may write an LLM-calling program during the episode. `action` receives a separately generated, frozen package of reusable actions. This isolates reusable prepared actions from ordinary code execution and from improvised programmatic calls.
 
 ## Data contract
 
-The benchmark accepts JSON task manifests. Each record identifies a public input directory, an isolated reference directory, and a named grader. Reference material is mounted only into the grader container. The included graders run external official commands when configured; absence of the official evaluator is an error, never a synthetic score.
+`datasets prepare` builds a seeded study with MBPP+ and HotpotQA distractor data, including development and test splits. It records source URLs and SHA-256 hashes in `data/dataset-lock.json`. The MBPP+ image runs EvalPlus; the HotpotQA image imports its official evaluator. Reference material is mounted only into the grader container.
 
 ## Safety and recovery
 
-Generated code runs with no network, no credentials, no Docker socket, resource limits, and a workspace mount. The broker is outside the container and alone owns API credentials. It reserves budget before each request, records confirmed responses transactionally, and marks a request as `unknown_outcome` if the process dies after submission. Such requests are never silently retried.
+Generated code runs with no network, credentials, or Docker socket, under resource limits and in a persistent per-step workspace. The broker alone owns API credentials. A completed request can be reused only when its complete payload hash matches; a changed prompt produces a new request. Unknown provider outcomes are never retried automatically.
