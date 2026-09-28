@@ -93,7 +93,7 @@ def prepare_study(dataset_root: Path, manifest_path: Path, *, development_per_fa
 
 def _mbpp_record(row: dict) -> tuple[dict, dict]:
     task_number = int(row["task_id"])
-    return ({"benchmark": "mbppplus", "evalplus_task_id": f"Mbpp/{task_number}", "prompt": row["prompt"]}, {"evalplus_task_id": f"Mbpp/{task_number}"})
+    return ({"benchmark": "mbppplus", "evalplus_task_id": f"Mbpp/{task_number}", "prompt": row["prompt"], "output_contract": "Return only the Python continuation to append after prompt."}, {"evalplus_task_id": f"Mbpp/{task_number}"})
 
 
 def _hotpot_record(row: dict) -> tuple[dict, dict]:
