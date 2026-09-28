@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import select
 import shutil
 import subprocess
 import tempfile
@@ -34,6 +35,10 @@ class ActionRunner:
                 while True:
                     if time.monotonic() - start > self.config.execution.timeout_seconds:
                         proc.kill(); raise ActionBenchError("Action exceeded wall-clock limit")
+                    ready, _, _ = select.select([proc.stdout], [], [], 0.25)
+                    if not ready:
+                        if proc.poll() is not None: break
+                        continue
                     line = proc.stdout.readline()
                     if not line:
                         break

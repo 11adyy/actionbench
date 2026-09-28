@@ -27,6 +27,11 @@ def dispatch(args, config, store) -> int:
         if store.pending_episodes(config.campaign): raise ActionBenchError("Cannot freeze while episodes are queued or running")
         store.conn.execute("UPDATE campaigns SET status='frozen', frozen_at=datetime('now') WHERE campaign=?", (config.campaign,))
         print(json.dumps({"campaign": config.campaign, "status": "frozen"}, indent=2)); return 0
+    if args.command == "report":
+        from .report import build_report
+        output = build_report(config, store)
+        if args.out: Path(args.out).write_text(json.dumps(output, indent=2))
+        print(json.dumps(output, indent=2)); return 0
     if not args.manifest:
         raise ActionBenchError(f"{args.command} requires --manifest")
     manifest = load_manifest(args.manifest, config.dataset_root)
@@ -59,11 +64,6 @@ def dispatch(args, config, store) -> int:
         _plan(config, store, manifest)
         _execute(config, store, manifest)
         print(json.dumps(store.campaign_status(config.campaign), indent=2)); return 0
-    if args.command == "report":
-        from .report import build_report
-        output = build_report(config, store)
-        if args.out: Path(args.out).write_text(json.dumps(output, indent=2))
-        print(json.dumps(output, indent=2)); return 0
     raise ActionBenchError(f"Command '{args.command}' is not implemented in this repository revision")
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from actionbench.config import load_config
 from actionbench.errors import ResumeConflict
 from actionbench.store import Store
+from actionbench.report import build_report
 
 
 class CoreTests(unittest.TestCase):
@@ -34,6 +35,14 @@ class CoreTests(unittest.TestCase):
             store.create_episode("e", cfg.campaign, "t", "f", "plain", 0)
             store.reserve_request("r", "e", "s", {}, .1, 77)
             self.assertEqual(store.episode_limits("e"), (1, 77, 0))
+
+    def test_report_separates_creation_cost(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); cfg = self.config(root); store = Store(cfg.db_path); store.ensure_campaign(cfg)
+            store.create_episode("c", cfg.campaign, "creation-code-0", "code", "action", 0)
+            store.reserve_request("r", "c", "s", {}, .1, 1); store.mark_submitted("r")
+            store.complete_request("r", "p", {"output_text": "x"}, {"input_tokens": 1, "cached_input_tokens": 0, "output_tokens": 1}, .01)
+            self.assertEqual(build_report(cfg, store)["skill_creation"]["code"]["total_usd"], .01)
 
 
 if __name__ == "__main__":
