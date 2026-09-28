@@ -17,10 +17,11 @@ actionbench images build --config experiment.json
 actionbench datasets prepare --config experiment.json --out manifests/study.json
 actionbench datasets prepare --config experiment.json --manifest manifests/study.json
 actionbench smoke --config experiment.json --manifest manifests/study.json
-actionbench live-check --config experiment.json
+actionbench integration-check --config experiment.json --manifest manifests/study.json
 ```
 
 `doctor` is local-only. `live-check` makes one real minimal API request and records its cost. Run it deliberately.
+`smoke` uses the real Docker graders on correct and incorrect answers. `integration-check` runs a real Docker action that calls the configured model through the broker. Both successful checks are stored with the manifest, harness, and image fingerprints; `create-skills` and `run` refuse stale or missing checks. `live-check` remains an optional direct provider diagnostic.
 
 ## Lifecycle
 
@@ -34,6 +35,8 @@ actionbench freeze --config experiment.json
 ```
 
 Every campaign has an immutable configuration hash and, once started, a bound manifest, harness source hash, and image digests. A changed input requires a new campaign name. The current ledger is `actionbench-v3.sqlite3`; it intentionally does not reuse earlier ledgers produced under a different experimental design. Completed evaluations are never rerun by `resume`. To raise a depleted dollar ceiling without changing the fixed experiment configuration, run `actionbench budget --config experiment.json --usd NEW_TOTAL`. This appends an auditable budget update.
+
+If a provider response was lost after submission, inspect the ledger's `unknown_outcome` request. Supply the genuine provider response and its token usage with `actionbench resolve-request --config experiment.json --request-id ID --response-file response.json --evidence 'provider log reference'`. If provider records establish that the request was never executed, use `--confirmed-not-executed` instead of `--response-file`. The resolution and evidence are recorded in the event ledger. Never declare non-execution merely because the response is unavailable.
 
 ## Conditions
 
@@ -50,5 +53,9 @@ This gives three direct comparisons: `action - skill` tests the full proposal; `
 Generated code runs with no network, credentials, or Docker socket, under resource limits and in a separate workspace for each attempt. The broker alone owns API credentials. A completed request can be reused only when its complete payload hash matches; a changed prompt produces a new request. Unknown provider outcomes are never retried automatically. Package writes use an atomic staging directory, and the ledger verifies package and saved-answer hashes before reuse. Each development evaluation has its own durable episode and budget, so a stopped creation run can resume without silently reusing a shared budget.
 
 The report keeps terminal agent execution failures as zero, keeps in-progress and infrastructure-interrupted work out of quality estimates, resamples benchmark tasks and generated package replicas as separate sources of uncertainty, and reports package-creation cost together with a break-even reuse estimate. Infrastructure interruptions remain resumable; protocol and model-output failures are terminal. A global campaign budget exhaustion leaves episodes queued until the audited ceiling is raised. Submitted provider calls with unknown outcomes are blocked for manual audit, because automatic retry could duplicate a paid request. Only a real Docker `smoke` and provider campaign can support the paper's empirical claim; the local Python tests alone cannot.
+
+If all package revisions fail, `create-skills` records that failure and continues. The resulting held-out treatment episodes receive terminal zero scores, preserving the planned denominator. The report shows package-creation failure rates. Cost comparisons must be read with their paired quality differences: a cheaper condition that solves fewer tasks is a tradeoff, not an efficiency gain. The pilot has 20 test tasks per family and three package replicas; its intervals describe uncertainty but do not establish that the sample is large enough for a confirmatory claim.
+
+After completing the pilot, estimate a prospective sample size for each family with `actionbench plan-sample --config experiment.json --family mbppplus --baseline skill --target-delta 0.10 --target-half-width 0.05 --out artifacts/mbpp-design.json`. The command estimates task, package, and interaction variation from complete paired pilot results and evaluates candidate numbers of tasks and package replicas. These are exploratory normal approximations, especially uncertain with only three package replicas. Choose and freeze a new campaign's sample size before observing its test outcomes.
 
 The scientific design, analyses, reporting requirements, and paper outline are in [PROTOCOL.md](PROTOCOL.md).
