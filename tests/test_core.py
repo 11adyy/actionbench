@@ -6,9 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from actionbench.agent import AgentRunner
-from actionbench.commands import _development_episode, _read_saved_answer, _validate_on_development, _verified_package
+from actionbench.commands import _bind_study, _creation_episode, _development_episode, _plan_test_episodes, _read_saved_answer, _validate_on_development, _verified_package
 from actionbench.cli import campaign_lock
 from actionbench.config import load_config
+from actionbench.design import plan_sample
 from actionbench.broker import Broker
 from actionbench.errors import ActionBenchError, InfrastructureError, UnknownProviderOutcome
 from actionbench.grader import grade
@@ -84,6 +85,15 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(broker.call("e", "k", "i", "x", 4).text, "ok")
             self.assertEqual(store.request_for("e", "k", digest)["state"], "completed")
 
+    def test_unicode_input_uses_conservative_byte_reservation(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
+            broker = Broker(config, store)
+            broker.client = type("Client", (), {"request": lambda self, _: {"id": "p", "output_text": "ok", "usage": {"input_tokens": 5, "output_tokens": 1}}})()
+            broker.call("e", "k", "instructions", "你好世界", 4)
+            reservation = store.conn.execute("SELECT reserved_input_tokens FROM requests WHERE episode_id='e'").fetchone()[0]
+            self.assertGreaterEqual(reservation, len("instructions你好世界".encode()) + 1024)
+
     def test_submitted_request_becomes_manual_review_on_restart(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
@@ -103,6 +113,60 @@ class CoreTests(unittest.TestCase):
             row = store.conn.execute("SELECT state,actual_usd FROM requests WHERE episode_id='e'").fetchone()
             self.assertEqual(row["state"], "unknown_outcome")
             self.assertIsNone(row["actual_usd"])
+
+    def test_unknown_request_reconciles_with_audited_response(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "task", "f", "action", 0)
+            store.reserve_request("r", "e", "step", "hash", {}, .1, 12)
+            store.mark_submitted("r"); store.unknown_request("r", "connection lost")
+            store.set_episode("e", "blocked", retryable=False)
+            response = {"id": "provider-1", "output_text": "OK", "usage": {"input_tokens": 12, "output_tokens": 2}}
+            usage = Broker(config, store)._usage(response)
+            store.reconcile_request(config.campaign, "r", evidence="provider log entry 123", response=response, usage=usage, actual_usd=.03)
+            self.assertEqual(store.request_by_id("r")["state"], "completed")
+            self.assertEqual(store.episode("e")["status"], "queued")
+            self.assertEqual(store.conn.execute("SELECT COUNT(*) FROM events WHERE kind='manual_provider_reconciliation'").fetchone()[0], 1)
+
+    def test_unknown_request_can_be_retried_only_after_confirmed_nonexecution(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "task", "f", "action", 0)
+            store.reserve_request("r", "e", "step", "hash", {}, .1, 12)
+            store.mark_submitted("r"); store.unknown_request("r", "connection lost")
+            store.set_episode("e", "blocked", retryable=False)
+            store.reconcile_request(config.campaign, "r", evidence="provider confirmed request absent", response=None)
+            self.assertEqual(store.request_by_id("r")["state"], "rejected")
+            self.assertEqual(store.episode("e")["status"], "queued")
+            self.assertEqual(store.campaign_spend(config.campaign), 0)
+
+    def test_reconciliation_unblocks_creation_parent_and_development_child(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            parent = _creation_episode(config, "f", 0, "action")
+            child = _development_episode(config, "f", "action", 0, 0, "task")
+            store.create_episode(parent, config.campaign, "creation:f:action:0", "f", "action", 0)
+            store.create_episode(child, config.campaign, "creation-dev:f:action:0:0:task", "f", "action", 0)
+            store.reserve_request("r", child, "step", "hash", {}, .1, 12)
+            store.mark_submitted("r"); store.unknown_request("r", "connection lost")
+            store.set_episode(parent, "blocked", retryable=False)
+            store.set_episode(child, "blocked", retryable=False)
+            store.reconcile_request(config.campaign, "r", evidence="provider confirmed nonexecution")
+            self.assertEqual(store.episode(parent)["status"], "queued")
+            self.assertEqual(store.episode(child)["status"], "queued")
+
+    def test_study_requires_matching_recorded_external_gates(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            config = __import__("dataclasses").replace(config, provider=__import__("dataclasses").replace(config.provider, model="real-model", input_usd_per_million=1, output_usd_per_million=1))
+            manifest = SimpleNamespace(fingerprint="manifest", test_tasks=[1], tasks=[])
+            with patch("actionbench.commands._study_inputs", return_value=("harness", {"image": "digest"})):
+                with self.assertRaisesRegex(ActionBenchError, "grader_smoke"):
+                    _bind_study(config, store, manifest)
+                store.record_gate(config.campaign, "grader_smoke", "manifest", "harness", {"image": "digest"}, {"passed": True})
+                with self.assertRaisesRegex(ActionBenchError, "action_broker"):
+                    _bind_study(config, store, manifest)
+                store.record_gate(config.campaign, "action_broker", "manifest", "harness", {"image": "digest"}, {"passed": True})
+                _bind_study(config, store, manifest)
+            self.assertIsNotNone(store.study_binding(config.campaign))
 
     def test_second_coordinator_cannot_take_campaign_lock(self):
         with tempfile.TemporaryDirectory() as d:
@@ -230,6 +294,23 @@ class CoreTests(unittest.TestCase):
             skill.write_text("changed")
             with self.assertRaises(InfrastructureError): _verified_package(row)
 
+    def test_failed_package_creation_keeps_planned_test_denominator(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); config, store = self.make(root)
+            config = __import__("dataclasses").replace(config, replicas=1)
+            for kind in ("skill", "skill_script", "action"):
+                episode = _creation_episode(config, "f", 0, kind)
+                store.create_episode(episode, config.campaign, f"creation:f:{kind}:0", "f", kind, 0)
+                store.set_episode(episode, "failed", error="invalid package", retryable=False)
+            task = SimpleNamespace(id="held-out", family="f")
+            _plan_test_episodes(config, store, SimpleNamespace(test_tasks=[task]))
+            rows = store.conn.execute("SELECT condition,status FROM episodes WHERE task_id='held-out' ORDER BY condition").fetchall()
+            self.assertEqual(len(rows), 5)
+            self.assertEqual({row["condition"]: row["status"] for row in rows}, {"plain": "queued", "skill": "failed", "skill_script": "failed", "improvised": "failed", "action": "failed"})
+            report = build_report(config, store)
+            self.assertEqual(report["groups"]["f:action"]["primary_on_terminal_episodes"], 0)
+            self.assertEqual(report["package_creation"]["action"]["failure_rate"], 1)
+
     def test_pending_work_is_not_counted_as_a_zero_quality_result(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d))
@@ -263,8 +344,17 @@ class CoreTests(unittest.TestCase):
                 def run(self, *_args): raise ActionBenchError("invalid tool request")
             feedback = _validate_on_development(config, store, "f", 0, 0, [SimpleNamespace(id="d", public_input=source, family="f")], BrokenAgent(), "skill", root)
             self.assertEqual(feedback[0]["primary"], 0)
+            replay = _validate_on_development(config, store, "f", 0, 0, [SimpleNamespace(id="d", public_input=source, family="f")], BrokenAgent(), "skill", root)
+            self.assertEqual(replay, feedback)
             episode = store.resumable_episodes(config.campaign)
             self.assertEqual(episode, [])
+
+    def test_agent_json_array_is_terminal_protocol_failure(self):
+        class BrokerArray:
+            config = SimpleNamespace(budget=SimpleNamespace(max_llm_calls=1, max_output_tokens=64))
+            def call(self, *_args): return SimpleNamespace(text="[]")
+        with self.assertRaisesRegex(ActionBenchError, "JSON object"):
+            AgentRunner(BrokerArray(), None).run("e", "task", "plain", None, None)
 
     def test_grader_has_a_writable_temporary_filesystem(self):
         with tempfile.TemporaryDirectory() as d:
@@ -293,6 +383,24 @@ class CoreTests(unittest.TestCase):
                 store.save_evaluation(f"test-{condition}", "f", {"primary": 1})
             comparison = build_report(config, store)["paired_comparisons"]["f:action_minus_skill"]
             self.assertEqual(comparison["amortization"]["mean_creation_delta_usd_per_replica"], 7)
+
+    def test_pilot_sample_planning_uses_paired_task_and_package_variance(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            for task in range(4):
+                for replica in range(2):
+                    for condition, score in (("skill", 0.2), ("action", 0.3 + task * .05 + replica * .1)):
+                        episode = f"{task}-{replica}-{condition}"
+                        store.create_episode(episode, config.campaign, f"task-{task}", "f", condition, replica)
+                        store.save_evaluation(episode, "f", {"primary": score})
+                        store.set_episode(episode, "completed", retryable=False)
+            store.conn.execute("UPDATE campaigns SET status='frozen' WHERE campaign=?", (config.campaign,))
+            plan = plan_sample(config, store, "f", "skill", .1, .1)
+            self.assertEqual(plan["pilot_tasks"], 4)
+            self.assertEqual(plan["pilot_package_replicas"], 2)
+            self.assertGreater(plan["variance_components"]["task"], 0)
+            self.assertGreater(plan["variance_components"]["package"], 0)
+            self.assertTrue(all("approx_detection_probability" in item for item in plan["candidates"]))
 
 
 if __name__ == "__main__": unittest.main()

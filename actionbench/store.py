@@ -52,6 +52,12 @@ class Store:
           harness_hash TEXT NOT NULL, image_hashes_json TEXT NOT NULL,
           planned_test_episodes INTEGER NOT NULL, bound_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS validation_gates (
+          campaign TEXT NOT NULL REFERENCES campaigns(campaign), kind TEXT NOT NULL,
+          manifest_hash TEXT NOT NULL, harness_hash TEXT NOT NULL,
+          image_hashes_json TEXT NOT NULL, result_json TEXT NOT NULL,
+          completed_at TEXT NOT NULL, PRIMARY KEY(campaign,kind)
+        );
         CREATE TABLE IF NOT EXISTS budget_updates (
           id INTEGER PRIMARY KEY AUTOINCREMENT, campaign TEXT NOT NULL REFERENCES campaigns(campaign),
           ceiling_usd REAL NOT NULL, created_at TEXT NOT NULL
@@ -140,6 +146,14 @@ class Store:
     def study_binding(self, campaign: str):
         return self.conn.execute("SELECT * FROM campaign_inputs WHERE campaign=?", (campaign,)).fetchone()
 
+    def record_gate(self, campaign: str, kind: str, manifest_hash: str, harness_hash: str, image_hashes: dict[str, str], result: dict) -> None:
+        self.assert_mutable(campaign)
+        self.conn.execute("""INSERT OR REPLACE INTO validation_gates VALUES(?,?,?,?,?,?,?)""",
+                          (campaign, kind, manifest_hash, harness_hash, json.dumps(image_hashes, sort_keys=True), json.dumps(result, sort_keys=True), now()))
+
+    def gate(self, campaign: str, kind: str):
+        return self.conn.execute("SELECT * FROM validation_gates WHERE campaign=? AND kind=?", (campaign, kind)).fetchone()
+
     def budget_ceiling(self, config: Config) -> float:
         row = self.conn.execute("SELECT MAX(ceiling_usd) ceiling FROM budget_updates WHERE campaign=?", (config.campaign,)).fetchone()
         return max(config.budget.usd, float(row["ceiling"])) if row and row["ceiling"] is not None else config.budget.usd
@@ -189,6 +203,30 @@ class Store:
 
     def request_for(self, episode_id: str, request_key: str, request_hash: str):
         return self.conn.execute("SELECT * FROM requests WHERE episode_id=? AND request_key=? AND request_hash=?", (episode_id, request_key, request_hash)).fetchone()
+
+    def request_by_id(self, request_id: str):
+        return self.conn.execute("SELECT r.*,e.campaign,e.status episode_status FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE r.request_id=?", (request_id,)).fetchone()
+
+    def reconcile_request(self, campaign: str, request_id: str, *, evidence: str, response: dict | None = None, usage: dict | None = None, actual_usd: float | None = None) -> None:
+        self.assert_mutable(campaign)
+        if not evidence.strip(): raise ResumeConflict("Reconciliation requires an evidence reference")
+        with self.tx() as conn:
+            row = conn.execute("SELECT r.*,e.campaign,e.status episode_status,e.task_id,e.family,e.condition,e.replica FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE r.request_id=?", (request_id,)).fetchone()
+            if not row or row["campaign"] != campaign or row["state"] != "unknown_outcome" or row["episode_status"] != "blocked":
+                raise ResumeConflict("Request must have an unknown outcome in a blocked episode of this campaign")
+            if response is None:
+                conn.execute("UPDATE requests SET state='rejected',completed_at=? WHERE request_id=?", (now(), request_id))
+                resolution = "confirmed_not_executed"
+            else:
+                conn.execute("""UPDATE requests SET state='completed',provider_request_id=?,response_json=?,actual_usd=?,input_tokens=?,cached_input_tokens=?,output_tokens=?,completed_at=? WHERE request_id=?""",
+                             (response.get("id"), json.dumps(response, sort_keys=True), actual_usd, usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], now(), request_id))
+                resolution = "provider_response_recovered"
+            conn.execute("UPDATE episodes SET status='queued',retryable=1,error=NULL,updated_at=? WHERE episode_id=?", (now(), row["episode_id"]))
+            if row["task_id"].startswith("creation-dev:"):
+                parent_task = f"creation:{row['family']}:{row['condition']}:{row['replica']}"
+                conn.execute("UPDATE episodes SET status='queued',retryable=1,error=NULL,updated_at=? WHERE campaign=? AND task_id=? AND status='blocked'", (now(), campaign, parent_task))
+            conn.execute("INSERT INTO events(episode_id,kind,payload_json,created_at) VALUES(?,?,?,?)",
+                         (row["episode_id"], "manual_provider_reconciliation", json.dumps({"request_id": request_id, "resolution": resolution, "evidence": evidence}, sort_keys=True), now()))
 
     def reserve_request(self, request_id: str, episode_id: str, request_key: str, request_hash: str, request_json: dict, reserved_usd: float, reserved_input_tokens: int) -> None:
         with self.tx() as conn:
@@ -244,4 +282,8 @@ class Store:
         if not row: return {"campaign": campaign, "exists": False}
         counts = self.conn.execute("SELECT status,COUNT(*) n FROM episodes WHERE campaign=? GROUP BY status", (campaign,)).fetchall()
         binding = self.study_binding(campaign)
-        return {"campaign": campaign, "exists": True, "status": row["status"], "episodes": {r["status"]: r["n"] for r in counts}, "accounted_usd": self.campaign_spend(campaign), "manifest_hash": binding["manifest_hash"] if binding else None}
+        configured = json.loads(self.conn.execute("SELECT config_json FROM campaigns WHERE campaign=?", (campaign,)).fetchone()["config_json"])["budget"]["usd"]
+        update = self.conn.execute("SELECT MAX(ceiling_usd) ceiling FROM budget_updates WHERE campaign=?", (campaign,)).fetchone()["ceiling"]
+        ceiling = max(float(configured), float(update)) if update is not None else float(configured)
+        spent = self.campaign_spend(campaign)
+        return {"campaign": campaign, "exists": True, "status": row["status"], "episodes": {r["status"]: r["n"] for r in counts}, "accounted_usd": spent, "budget_ceiling_usd": ceiling, "budget_overrun_usd": max(0, spent-ceiling), "manifest_hash": binding["manifest_hash"] if binding else None}

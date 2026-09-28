@@ -31,7 +31,7 @@ def campaign_lock(path):
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="actionbench")
     subs = p.add_subparsers(dest="command", required=True)
-    for name in ("doctor", "live-check", "status", "datasets", "images", "budget", "smoke", "create-skills", "run", "resume", "freeze", "report"):
+    for name in ("doctor", "live-check", "status", "datasets", "images", "budget", "smoke", "integration-check", "resolve-request", "plan-sample", "create-skills", "run", "resume", "freeze", "report"):
         child = subs.add_parser(name)
         if name == "datasets": child.add_argument("operation", choices=["prepare"])
         if name == "images": child.add_argument("operation", choices=["build"])
@@ -39,6 +39,17 @@ def parser() -> argparse.ArgumentParser:
         child.add_argument("--manifest")
         child.add_argument("--out")
         if name == "budget": child.add_argument("--usd", required=True, type=float)
+        if name == "resolve-request":
+            child.add_argument("--request-id", required=True)
+            child.add_argument("--evidence", required=True)
+            resolution = child.add_mutually_exclusive_group(required=True)
+            resolution.add_argument("--response-file")
+            resolution.add_argument("--confirmed-not-executed", action="store_true")
+        if name == "plan-sample":
+            child.add_argument("--family", required=True)
+            child.add_argument("--baseline", default="skill")
+            child.add_argument("--target-delta", required=True, type=float)
+            child.add_argument("--target-half-width", required=True, type=float)
     return p
 
 

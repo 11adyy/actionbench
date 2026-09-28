@@ -41,7 +41,15 @@ def build_report(config, store) -> dict:
     binding = store.study_binding(config.campaign)
     terminal_total = sum(group["terminal"] for group in groups.values())
     complete = bool(binding and terminal_total == binding["planned_test_episodes"] and sum(group["blocked"] for group in groups.values()) == 0)
-    output = {"campaign": config.campaign, "analysis_status": "complete" if complete else "provisional", "planned_test_episodes": binding["planned_test_episodes"] if binding else None, "groups": {}, "skill_creation": dict(creation), "status": store.campaign_status(config.campaign)}
+    creation_rows = store.conn.execute("""SELECT condition,status,COUNT(*) n FROM episodes WHERE campaign=? AND task_id LIKE 'creation:%' GROUP BY condition,status""", (config.campaign,)).fetchall()
+    package_creation = defaultdict(lambda: {"attempted": 0, "completed": 0, "failed": 0, "pending": 0})
+    for row in creation_rows:
+        item = package_creation[row["condition"]]
+        item["attempted"] += row["n"]
+        item[row["status"] if row["status"] in {"completed", "failed"} else "pending"] += row["n"]
+    for item in package_creation.values():
+        item["failure_rate"] = item["failed"] / item["attempted"] if item["attempted"] else None
+    output = {"campaign": config.campaign, "analysis_status": "complete" if complete else "provisional", "planned_test_episodes": binding["planned_test_episodes"] if binding else None, "groups": {}, "package_creation": dict(package_creation), "skill_creation": dict(creation), "status": store.campaign_status(config.campaign)}
     for name, group in sorted(groups.items()):
         scored_total = sum(group["scored"])
         output["groups"][name] = {
@@ -91,6 +99,7 @@ def build_report(config, store) -> dict:
                 "usd": usd,
                 "inferential_interval_available": inferential,
                 "incomplete_pairs_excluded": excluded[family],
+                "observed_cost_saving_at_nonnegative_quality": quality["mean_delta"] >= 0 and usd["mean_delta"] <= 0,
                 "amortization": {"mean_creation_delta_usd_per_replica": mean_creation_delta, "mean_runtime_delta_usd_per_episode": mean_runtime_delta, "break_even_uses_per_package": break_even},
             }
     output["paired_comparisons"] = comparisons

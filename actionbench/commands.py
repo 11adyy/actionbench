@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .agent import AgentRunner
 from .broker import Broker
-from .errors import ActionBenchError, CampaignBudgetExceeded, InfrastructureError, UnknownProviderOutcome
+from .errors import ActionBenchError, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome
 from .grader import grade
 from .manifest import Manifest, load_manifest, verify_data
 from .runner import ActionRunner
@@ -34,6 +34,19 @@ def dispatch(args, config, store) -> int:
     if args.command == "budget":
         value = store.raise_budget_ceiling(config, args.usd)
         print(json.dumps({"campaign": config.campaign, "ceiling_usd": value}, indent=2)); return 0
+    if args.command == "resolve-request":
+        try: response = json.loads(Path(args.response_file).read_text()) if args.response_file else None
+        except (OSError, json.JSONDecodeError) as exc: raise ActionBenchError(f"Cannot read genuine provider response: {exc}") from exc
+        broker = Broker(config, store)
+        usage = broker._usage(response) if response is not None else None
+        actual = broker._cost(usage) if usage is not None else None
+        store.reconcile_request(config.campaign, args.request_id, evidence=args.evidence, response=response, usage=usage, actual_usd=actual)
+        print(json.dumps({"request_id": args.request_id, "resolution": "response_recovered" if response is not None else "confirmed_not_executed"}, indent=2)); return 0
+    if args.command == "plan-sample":
+        from .design import plan_sample
+        output = plan_sample(config, store, args.family, args.baseline, args.target_delta, args.target_half_width)
+        if args.out: Path(args.out).write_text(json.dumps(output, indent=2))
+        print(json.dumps(output, indent=2)); return 0
     if args.command == "report":
         from .report import build_report
         output = build_report(config, store)
@@ -71,14 +84,26 @@ def dispatch(args, config, store) -> int:
     if args.command == "smoke":
         failures = verify_data(manifest)
         if failures: raise ActionBenchError("\n".join(failures))
+        harness_hash, image_hashes = _study_inputs(config, manifest)
         output = _smoke(manifest, config)
+        store.record_gate(config.campaign, "grader_smoke", manifest.fingerprint, harness_hash, image_hashes, output)
+        print(json.dumps(output, indent=2)); return 0
+    if args.command == "integration-check":
+        failures = verify_data(manifest)
+        if failures: raise ActionBenchError("\n".join(failures))
+        if config.provider.model == "SET_A_REAL_MODEL" or not all(value > 0 for value in (config.provider.input_usd_per_million, config.provider.output_usd_per_million)):
+            raise ActionBenchError("Configure a real model and positive token prices before the integration check")
+        harness_hash, image_hashes = _study_inputs(config, manifest)
+        output = _integration_check(config, store)
+        store.record_gate(config.campaign, "action_broker", manifest.fingerprint, harness_hash, image_hashes, output)
         print(json.dumps(output, indent=2)); return 0
     if args.command == "create-skills":
         failures = verify_data(manifest)
         if failures: raise ActionBenchError("\n".join(failures))
         _bind_study(config, store, manifest)
         _create_packages(config, store, manifest)
-        print(json.dumps({"status": "created", "families": len(manifest.families), "replicas": config.replicas}, indent=2)); return 0
+        outcomes = store.conn.execute("SELECT status,COUNT(*) n FROM episodes WHERE campaign=? AND task_id LIKE 'creation:%' GROUP BY status", (config.campaign,)).fetchall()
+        print(json.dumps({"status": "creation_attempted", "packages": {row["status"]: row["n"] for row in outcomes}}, indent=2)); return 0
     if args.command in {"run", "resume"}:
         failures = verify_data(manifest)
         if failures: raise ActionBenchError("\n".join(failures))
@@ -92,6 +117,16 @@ def dispatch(args, config, store) -> int:
 def _bind_study(config, store, manifest: Manifest) -> None:
     if config.provider.model == "SET_A_REAL_MODEL" or not all(value > 0 for value in (config.provider.input_usd_per_million, config.provider.output_usd_per_million)):
         raise ActionBenchError("Set a real provider model and positive verified input/output token prices before starting the study")
+    harness_hash, image_hashes = _study_inputs(config, manifest)
+    fingerprint = (manifest.fingerprint, harness_hash, json.dumps(image_hashes, sort_keys=True))
+    for kind in ("grader_smoke", "action_broker"):
+        gate = store.gate(config.campaign, kind)
+        if not gate or (gate["manifest_hash"], gate["harness_hash"], gate["image_hashes_json"]) != fingerprint:
+            raise ActionBenchError(f"Required {kind} gate is missing or stale; run smoke and integration-check for this exact study")
+    store.bind_study(config.campaign, manifest.fingerprint, harness_hash, image_hashes, len(manifest.test_tasks) * config.replicas * len(config.conditions))
+
+
+def _study_inputs(config, manifest: Manifest) -> tuple[str, dict[str, str]]:
     if not shutil.which("docker"): raise InfrastructureError("Docker is required before binding an experiment")
     root = Path(__file__).parents[1]
     digest = hashlib.sha256()
@@ -104,7 +139,30 @@ def _bind_study(config, store, manifest: Manifest) -> None:
         result = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", name], capture_output=True, text=True)
         if result.returncode: raise InfrastructureError(f"Missing required Docker image {name}; run images build and pull the execution image")
         image_hashes[name] = result.stdout.strip()
-    store.bind_study(config.campaign, manifest.fingerprint, digest.hexdigest(), image_hashes, len(manifest.test_tasks) * config.replicas * len(config.conditions))
+    return digest.hexdigest(), image_hashes
+
+
+def _integration_check(config, store) -> dict:
+    from . import action_sdk
+    episode = f"{config.campaign}:integration:{uuid.uuid4().hex}"
+    store.create_episode(episode, config.campaign, episode, "integration", "action", 0)
+    root = config.artifact_root / "integration-probe" / episode
+    root.mkdir(parents=True)
+    (root / "main.py").write_text("import json,sys\nfrom action_sdk import ActionContext\nctx=ActionContext(json.loads(sys.stdin.readline())['input'])\nctx.emit({'text':ctx.call_llm('Reply with exactly OK.',instructions='Return exactly OK.',max_output_tokens=16)})\n")
+    (root / "action_sdk.py").write_text(Path(action_sdk.__file__).read_text())
+    (root / "procedure.json").write_text(json.dumps({"id": "broker-probe", "command": ["python", "/action/main.py"], "input_schema": {"type": "object"}}))
+    store.set_episode(episode, "running")
+    try:
+        output = ActionRunner(config, Broker(config, store)).run(episode, root, "probe", {}, allow_llm=True)
+        if output.get("text", "").strip() != "OK": raise ActionBenchError(f"Integration probe returned {output!r}")
+        store.set_episode(episode, "completed", retryable=False)
+    except UnknownProviderOutcome as exc:
+        store.set_episode(episode, "blocked", error=str(exc), retryable=False); raise
+    except (ConfigurationError, InfrastructureError) as exc:
+        store.set_episode(episode, "queued", error=str(exc)); raise
+    except Exception as exc:
+        store.set_episode(episode, "failed", error=str(exc), retryable=False); raise
+    return {"episode_id": episode, "action_output": output, "provider_requests": store.conn.execute("SELECT COUNT(*) n FROM requests WHERE episode_id=? AND state='completed'", (episode,)).fetchone()["n"]}
 
 
 def _smoke(manifest: Manifest, config) -> dict:
@@ -172,12 +230,12 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                 prior = store.episode(episode)
                 if prior["status"] == "blocked": raise UnknownProviderOutcome(f"Creation episode {episode} needs provider-outcome review")
                 if prior["status"] == "failed" and not prior["retryable"]:
-                    raise ActionBenchError(f"Creation episode {episode} has a terminal failure; start a new campaign after fixing it")
+                    continue
                 store.set_episode(episode, "running")
                 started = time.monotonic()
                 feedback: list[dict] = []
                 try:
-                    final_path = None; final_hash = None
+                    final_path = None; final_hash = None; best_score = -1.0; last_path = None
                     base_skill_md = None
                     if kind in {"skill_script", "action"}:
                         paired = store.package(config.campaign, family.id, replica, "skill")
@@ -186,23 +244,27 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                     for revision in range(3):
                         target = base / family.id / str(replica) / kind / f"v{revision}"
                         try:
-                            package_hash = create_package(broker, episode, family, replica, kind, target, feedback, base_skill_md, revision=revision, previous_package=final_path)
-                        except (CampaignBudgetExceeded, InfrastructureError, UnknownProviderOutcome): raise
+                            package_hash = create_package(broker, episode, family, replica, kind, target, feedback, base_skill_md, revision=revision, previous_package=last_path)
+                        except (CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome): raise
                         except ActionBenchError as exc:
                             feedback = [{"generation_error": str(exc)}]
                             continue
                         feedback = _validate_on_development(config, store, family.id, replica, revision, dev_tasks, agent, kind, target)
-                        final_path, final_hash = target, package_hash
+                        last_path = target
+                        candidate_score = sum(item["primary"] for item in feedback) / len(feedback)
+                        if candidate_score > best_score:
+                            final_path, final_hash, best_score = target, package_hash, candidate_score
                         if all(item["primary"] >= 1 for item in feedback): break
                     if not final_path or not final_hash: raise ActionBenchError(f"No valid {kind} package was produced for {family.id} replica {replica}")
                     store.save_package(config.campaign, family.id, replica, kind, final_hash, str(final_path), episode)
                     store.set_episode(episode, "completed")
                 except UnknownProviderOutcome as exc:
                     store.set_episode(episode, "blocked", error=str(exc), retryable=False); raise
-                except (InfrastructureError, CampaignBudgetExceeded) as exc:
+                except (ConfigurationError, InfrastructureError, CampaignBudgetExceeded) as exc:
                     store.set_episode(episode, "queued", error=str(exc)); raise
                 except ActionBenchError as exc:
-                    store.set_episode(episode, "failed", error=str(exc), retryable=False); raise
+                    store.set_episode(episode, "failed", error=str(exc), retryable=False)
+                    continue
                 except Exception as exc:
                     store.set_episode(episode, "failed", error=str(exc), retryable=True); raise
                 finally:
@@ -226,7 +288,10 @@ def _validate_on_development(config, store, family: str, replica: int, revision:
             feedback.append({"task_id": task.id, "primary": score["primary"], "details": score})
             continue
         if existing["status"] == "failed" and not existing["retryable"]:
-            raise ActionBenchError(f"Development evaluation {episode} needs manual resolution")
+            feedback.append({"task_id": task.id, "primary": 0.0, "error": existing["error"] or "Agent failed"})
+            continue
+        if existing["status"] == "blocked":
+            raise UnknownProviderOutcome(f"Development evaluation {episode} has an unresolved provider outcome")
         store.set_episode(episode, "running")
         started = time.monotonic()
         try:
@@ -246,7 +311,7 @@ def _validate_on_development(config, store, family: str, replica: int, revision:
         except CampaignBudgetExceeded as exc:
             store.set_episode(episode, "queued", error=str(exc))
             raise
-        except InfrastructureError as exc:
+        except (ConfigurationError, InfrastructureError) as exc:
             store.set_episode(episode, "queued", error=str(exc))
             raise
         except ActionBenchError as exc:
@@ -268,12 +333,20 @@ def _plan_test_episodes(config, store, manifest: Manifest) -> None:
             conventional = store.package(config.campaign, task.family, replica, "skill")
             scripts = store.package(config.campaign, task.family, replica, "skill_script")
             actions = store.package(config.campaign, task.family, replica, "action")
-            if not conventional or not scripts or not actions: raise ActionBenchError(f"Missing packages for {task.family} replica {replica}; run create-skills")
-            for package in (conventional, scripts, actions): _verified_package(package)
-            packages = {"plain": None, "skill": conventional["package_hash"], "skill_script": scripts["package_hash"], "improvised": conventional["package_hash"], "action": actions["package_hash"]}
+            for kind, package in (("skill", conventional), ("skill_script", scripts), ("action", actions)):
+                if package: _verified_package(package)
+                else:
+                    creation = store.episode(_creation_episode(config, task.family, replica, kind))
+                    if not creation or creation["status"] != "failed" or creation["retryable"]:
+                        raise ActionBenchError(f"Creation of {kind} for {task.family} replica {replica} is incomplete; run create-skills")
+            packages = {"plain": None, "skill": conventional["package_hash"] if conventional else None, "skill_script": scripts["package_hash"] if scripts else None, "improvised": conventional["package_hash"] if conventional else None, "action": actions["package_hash"] if actions else None}
             for condition in config.conditions:
-                episode_id = _id(config.campaign, "test", task.id, condition, replica, packages[condition] or "plain")
-                store.create_episode(episode_id, config.campaign, task.id, task.family, condition, replica, packages[condition])
+                missing = condition != "plain" and packages[condition] is None
+                package_hash = packages[condition] or (f"creation-failed:{condition}" if missing else None)
+                episode_id = _id(config.campaign, "test", task.id, condition, replica, package_hash or "plain")
+                store.create_episode(episode_id, config.campaign, task.id, task.family, condition, replica, package_hash)
+                if missing and store.episode(episode_id)["status"] == "queued":
+                    store.set_episode(episode_id, "failed", error=f"Required {condition} package could not be created", retryable=False)
 
 
 def _execute(config, store, manifest: Manifest) -> None:
@@ -305,7 +378,7 @@ def _execute(config, store, manifest: Manifest) -> None:
             store.set_episode(row["episode_id"], "blocked", error=str(exc), retryable=False)
         except CampaignBudgetExceeded as exc:
             store.set_episode(row["episode_id"], "queued", error=str(exc)); break
-        except InfrastructureError as exc:
+        except (ConfigurationError, InfrastructureError) as exc:
             store.set_episode(row["episode_id"], "queued", error=str(exc)); raise
         except ActionBenchError as exc:
             store.set_episode(row["episode_id"], "failed", error=str(exc), retryable=False)
