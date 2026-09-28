@@ -1,0 +1,18 @@
+{
+  "campaign": "pilot-001",
+  "provider": {
+    "kind": "openai_responses",
+    "base_url": "https://api.openai.com/v1",
+    "api_key_env": "OPENAI_API_KEY",
+    "model": "SET_A_REAL_MODEL",
+    "input_usd_per_million": 0.0,
+    "cached_input_usd_per_million": 0.0,
+    "output_usd_per_million": 0.0
+  },
+  "budget": {"usd": 8.0, "max_input_tokens": 64000, "max_output_tokens": 8000, "max_llm_calls": 16},
+  "execution": {"docker_image": "python:3.11-slim", "timeout_seconds": 300, "memory_mb": 2048, "cpus": 2},
+  "dataset_root": "data",
+  "artifact_root": "artifacts",
+  "replicas": 3,
+  "conditions": ["plain", "skill", "improvised", "action"]
+}

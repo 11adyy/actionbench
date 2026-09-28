@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterator
+
+from .config import Config
+from .errors import ResumeConflict
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class Store:
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(path, timeout=30, isolation_level=None)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.migrate()
+
+    def close(self) -> None:
+        self.conn.close()
+
+    @contextmanager
+    def tx(self) -> Iterator[sqlite3.Connection]:
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield self.conn
+        except BaseException:
+            self.conn.execute("ROLLBACK")
+            raise
+        else:
+            self.conn.execute("COMMIT")
+
+    def migrate(self) -> None:
+        self.conn.executescript("""
+        CREATE TABLE IF NOT EXISTS campaigns (
+          campaign TEXT PRIMARY KEY, config_hash TEXT NOT NULL, config_json TEXT NOT NULL,
+          status TEXT NOT NULL, created_at TEXT NOT NULL, frozen_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS episodes (
+          episode_id TEXT PRIMARY KEY, campaign TEXT NOT NULL REFERENCES campaigns(campaign),
+          task_id TEXT NOT NULL, family TEXT NOT NULL, condition TEXT NOT NULL, replica INTEGER NOT NULL,
+          skill_hash TEXT, status TEXT NOT NULL, claimed_by TEXT, claim_expires_at TEXT,
+          final_artifact TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          UNIQUE(campaign, task_id, condition, replica, skill_hash)
+        );
+        CREATE TABLE IF NOT EXISTS requests (
+          request_id TEXT PRIMARY KEY, episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+          step_id TEXT NOT NULL, provider_request_id TEXT, state TEXT NOT NULL,
+          request_json TEXT NOT NULL, response_json TEXT, reserved_usd REAL NOT NULL,
+          actual_usd REAL, input_tokens INTEGER, cached_input_tokens INTEGER, output_tokens INTEGER,
+          created_at TEXT NOT NULL, completed_at TEXT, UNIQUE(episode_id, step_id)
+        );
+        CREATE TABLE IF NOT EXISTS events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, episode_id TEXT REFERENCES episodes(episode_id),
+          kind TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS evaluations (
+          episode_id TEXT PRIMARY KEY REFERENCES episodes(episode_id), grader TEXT NOT NULL,
+          score_json TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        """)
+
+    def ensure_campaign(self, config: Config) -> None:
+        payload = config.source_path.read_text()
+        row = self.conn.execute("SELECT config_hash FROM campaigns WHERE campaign=?", (config.campaign,)).fetchone()
+        if row and row["config_hash"] != config.fingerprint:
+            raise ResumeConflict("Campaign exists with a different configuration. Choose a new campaign name.")
+        if not row:
+            self.conn.execute("INSERT INTO campaigns VALUES (?, ?, ?, 'draft', ?, NULL)",
+                              (config.campaign, config.fingerprint, payload, now()))
+
+    def event(self, episode_id: str | None, kind: str, payload: dict) -> None:
+        self.conn.execute("INSERT INTO events(episode_id,kind,payload_json,created_at) VALUES(?,?,?,?)",
+                          (episode_id, kind, json.dumps(payload, sort_keys=True), now()))
+
+    def campaign_status(self, campaign: str) -> dict:
+        campaign_row = self.conn.execute("SELECT * FROM campaigns WHERE campaign=?", (campaign,)).fetchone()
+        if not campaign_row:
+            return {"campaign": campaign, "exists": False}
+        counts = self.conn.execute("SELECT status,count(*) n FROM episodes WHERE campaign=? GROUP BY status", (campaign,)).fetchall()
+        spend = self.conn.execute("SELECT COALESCE(SUM(COALESCE(actual_usd,reserved_usd)),0) v FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=?", (campaign,)).fetchone()["v"]
+        return {"campaign": campaign, "exists": True, "status": campaign_row["status"], "episodes": {r["status"]: r["n"] for r in counts}, "accounted_usd": spend}
