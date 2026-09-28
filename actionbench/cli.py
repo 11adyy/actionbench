@@ -15,6 +15,7 @@ def parser() -> argparse.ArgumentParser:
     subs = p.add_subparsers(dest="command", required=True)
     for name in ("doctor", "live-check", "status", "datasets", "create-skills", "run", "resume", "freeze", "report"):
         child = subs.add_parser(name)
+        if name == "datasets": child.add_argument("operation", choices=["prepare"])
         child.add_argument("--config", required=True)
         child.add_argument("--manifest")
         child.add_argument("--out")

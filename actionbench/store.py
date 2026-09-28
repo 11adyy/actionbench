@@ -66,6 +66,11 @@ class Store:
           episode_id TEXT PRIMARY KEY REFERENCES episodes(episode_id), grader TEXT NOT NULL,
           score_json TEXT NOT NULL, created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS skill_packages (
+          campaign TEXT NOT NULL REFERENCES campaigns(campaign), family TEXT NOT NULL, replica INTEGER NOT NULL,
+          package_hash TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL,
+          PRIMARY KEY(campaign, family, replica)
+        );
         """)
 
     def ensure_campaign(self, config: Config) -> None:
@@ -85,6 +90,24 @@ class Store:
         stamp = now()
         self.conn.execute("""INSERT OR IGNORE INTO episodes(episode_id,campaign,task_id,family,condition,replica,skill_hash,status,created_at,updated_at)
                           VALUES(?,?,?,?,?,?,?,'queued',?,?)""", (episode_id, campaign, task_id, family, condition, replica, skill_hash, stamp, stamp))
+
+    def save_skill_package(self, campaign: str, family: str, replica: int, package_hash: str, path: str) -> None:
+        self.conn.execute("INSERT INTO skill_packages VALUES(?,?,?,?,?,?)", (campaign, family, replica, package_hash, path, now()))
+
+    def skill_package(self, campaign: str, family: str, replica: int):
+        return self.conn.execute("SELECT * FROM skill_packages WHERE campaign=? AND family=? AND replica=?", (campaign, family, replica)).fetchone()
+
+    def episode(self, episode_id: str):
+        return self.conn.execute("SELECT * FROM episodes WHERE episode_id=?", (episode_id,)).fetchone()
+
+    def set_episode(self, episode_id: str, status: str, *, final_artifact: str | None = None, error: str | None = None) -> None:
+        self.conn.execute("UPDATE episodes SET status=?, final_artifact=COALESCE(?,final_artifact), error=?, updated_at=? WHERE episode_id=?", (status, final_artifact, error, now(), episode_id))
+
+    def pending_episodes(self, campaign: str):
+        return self.conn.execute("SELECT * FROM episodes WHERE campaign=? AND status IN ('queued','running') ORDER BY task_id, condition, replica", (campaign,)).fetchall()
+
+    def save_evaluation(self, episode_id: str, grader: str, score: dict) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO evaluations VALUES(?,?,?,?)", (episode_id, grader, json.dumps(score, sort_keys=True), now()))
 
     def campaign_status(self, campaign: str) -> dict:
         campaign_row = self.conn.execute("SELECT * FROM campaigns WHERE campaign=?", (campaign,)).fetchone()

@@ -1,0 +1,21 @@
+{
+  "name": "pilot",
+  "families": [
+    {
+      "id": "mbppplus",
+      "creator_brief": "Create a reusable Python-programming skill. Return only valid JSON following the requested schema.",
+      "demonstrations": ["examples/mbppplus-demo-01", "examples/mbppplus-demo-02"],
+      "tasks": [
+        {
+          "id": "mbpp-001",
+          "public_input": "public/mbpp-001.json",
+          "reference_dir": "private/mbpp-001",
+          "grader": {
+            "image": "YOUR_PINNED_EVALPLUS_IMAGE",
+            "command": ["YOUR_OFFICIAL_GRADER", "--submission", "/submission/submission.txt", "--reference", "/reference"]
+          }
+        }
+      ]
+    }
+  ]
+}
