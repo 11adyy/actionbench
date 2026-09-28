@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from actionbench.agent import AgentRunner
-from actionbench.commands import _validate_on_development
+from actionbench.commands import _development_episode, _validate_on_development
+from actionbench.cli import campaign_lock
 from actionbench.config import load_config
 from actionbench.broker import Broker
 from actionbench.errors import ActionBenchError, UnknownProviderOutcome
@@ -24,6 +25,7 @@ class CoreTests(unittest.TestCase):
         raw.update({"campaign": campaign, "dataset_root": "data", "artifact_root": "artifacts"})
         path = root / "config.json"; path.write_text(json.dumps(raw))
         config = load_config(path); store = Store(config.db_path); store.ensure_campaign(config)
+        self.addCleanup(store.close)
         return config, store
 
     def test_request_identity_includes_payload_hash(self):
@@ -92,6 +94,23 @@ class CoreTests(unittest.TestCase):
             with self.assertRaises(UnknownProviderOutcome): Broker(config, store).call("e", "k", "i", "x", 4)
             self.assertEqual(store.request_for("e", "k", digest)["state"], "unknown_outcome")
 
+    def test_missing_provider_usage_blocks_instead_of_recording_zero_cost(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
+            broker = Broker(config, store)
+            broker.client = type("Client", (), {"request": lambda self, _: {"id": "p", "output_text": "ok"}})()
+            with self.assertRaises(UnknownProviderOutcome): broker.call("e", "k", "i", "x", 4)
+            row = store.conn.execute("SELECT state,actual_usd FROM requests WHERE episode_id='e'").fetchone()
+            self.assertEqual(row["state"], "unknown_outcome")
+            self.assertIsNone(row["actual_usd"])
+
+    def test_second_coordinator_cannot_take_campaign_lock(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "ledger.sqlite3"
+            with campaign_lock(path):
+                with self.assertRaises(ActionBenchError):
+                    with campaign_lock(path): pass
+
     def test_action_receives_paired_skill_and_usable_procedure_contract(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); package = root / "package"; procedure = package / "procedures" / "extract"
@@ -132,7 +151,7 @@ class CoreTests(unittest.TestCase):
             runner.container = FakeContainer()
             self.assertEqual(runner.run_plain_program("e", "step", "print('x')", {}), {"ok": True})
             self.assertEqual(observed["command"][0], "python")
-            self.assertRegex(observed["command"][1], r"^/workspace/[0-9a-f]+\.py$")
+            self.assertEqual(observed["command"][1], "/workspace/program.py")
             self.assertIsNone(observed["action_dir"])
 
     def test_package_write_is_recoverable_after_successful_creation(self):
@@ -178,6 +197,21 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(second, first)
             self.assertEqual(len({row["episode_id"] for row in store.resumable_episodes(config.campaign)}), 0)
 
+    def test_saved_development_answer_is_graded_without_another_agent_call(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); config, store = self.make(root); public = root / "task.json"; public.write_text("task")
+            episode = _development_episode(config, "f", "skill", 0, 0, "d")
+            store.create_episode(episode, config.campaign, "creation-dev:f:skill:0:0:d", "f", "skill", 0)
+            answer = config.artifact_root / "answers" / config.campaign / f"{episode}.txt"
+            answer.parent.mkdir(parents=True); answer.write_text("checkpointed answer")
+            store.save_answer(episode, str(answer))
+            class Agent:
+                def run(self, *_args): raise AssertionError("agent must not run again")
+            with patch("actionbench.commands.grade", return_value={"primary": 1}) as grader:
+                result = _validate_on_development(config, store, "f", 0, 0, [SimpleNamespace(id="d", public_input=public, family="f")], Agent(), "skill", root)
+            self.assertEqual(result[0]["primary"], 1)
+            self.assertEqual(grader.call_args.args[1], "checkpointed answer")
+
     def test_pending_work_is_not_counted_as_a_zero_quality_result(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d))
@@ -187,31 +221,30 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(report["groups"]["f:action"]["primary_on_terminal_episodes"], 1)
             self.assertIsNone(report["groups"]["f:skill"]["primary_on_terminal_episodes"])
 
-    def test_retryable_infrastructure_failure_becomes_terminal_after_two_attempts(self):
+    def test_retryable_infrastructure_failure_remains_resumable_after_two_attempts(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "task", "f", "action", 0)
             store.set_episode("e", "running"); store.set_episode("e", "failed", error="temporary", retryable=True)
             self.assertTrue(store.episode("e")["retryable"])
             store.set_episode("e", "running"); store.set_episode("e", "failed", error="temporary", retryable=True)
-            self.assertFalse(store.episode("e")["retryable"])
-            self.assertEqual(store.resumable_episodes(config.campaign), [])
+            self.assertTrue(store.episode("e")["retryable"])
+            self.assertEqual([r["episode_id"] for r in store.resumable_episodes(config.campaign)], ["e"])
 
-    def test_stalled_running_episode_becomes_a_terminal_failure_after_two_attempts(self):
+    def test_stalled_running_episode_remains_resumable_after_two_attempts(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "task", "f", "action", 0)
             store.set_episode("e", "running"); store.set_episode("e", "running")
-            self.assertEqual(store.resumable_episodes(config.campaign), [])
+            self.assertEqual([r["episode_id"] for r in store.resumable_episodes(config.campaign)], ["e"])
             row = store.episode("e")
-            self.assertEqual(row["status"], "failed")
-            self.assertFalse(row["retryable"])
+            self.assertEqual(row["status"], "running")
 
     def test_protocol_failure_in_development_is_terminal(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); config, store = self.make(root); source = root / "task.json"; source.write_text("task")
             class BrokenAgent:
                 def run(self, *_args): raise ActionBenchError("invalid tool request")
-            with self.assertRaises(ActionBenchError):
-                _validate_on_development(config, store, "f", 0, 0, [SimpleNamespace(id="d", public_input=source, family="f")], BrokenAgent(), "skill", root)
+            feedback = _validate_on_development(config, store, "f", 0, 0, [SimpleNamespace(id="d", public_input=source, family="f")], BrokenAgent(), "skill", root)
+            self.assertEqual(feedback[0]["primary"], 0)
             episode = store.resumable_episodes(config.campaign)
             self.assertEqual(episode, [])
 

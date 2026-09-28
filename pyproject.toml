@@ -7,7 +7,7 @@ name = "actionbench"
 version = "0.1.0"
 description = "Resumable, real-API evaluation harness for skill actions"
 requires-python = ">=3.11"
-dependencies = ["certifi>=2024.2.2"]
+dependencies = ["certifi>=2024.2.2", "jsonschema>=4.21,<5"]
 
 [project.scripts]
 actionbench = "actionbench.cli:main"

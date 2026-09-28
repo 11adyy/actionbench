@@ -6,8 +6,12 @@ from pathlib import Path
 
 gold = json.loads(Path('/reference/gold.json').read_text())
 try: prediction = json.loads(Path('/submission/submission.txt').read_text())
-except json.JSONDecodeError as exc: raise SystemExit(f'Invalid Hotpot prediction JSON: {exc}')
-if not isinstance(prediction.get('answer'), str) or not isinstance(prediction.get('sp'), list): raise SystemExit('Prediction must contain answer and sp')
+except json.JSONDecodeError:
+    print(json.dumps({'primary': 0.0, 'answer_f1': 0.0, 'support_f1': 0.0, 'official': 'HotpotQA invalid submission'}))
+    raise SystemExit(0)
+if not isinstance(prediction, dict) or not isinstance(prediction.get('answer'), str) or not isinstance(prediction.get('sp'), list):
+    print(json.dumps({'primary': 0.0, 'answer_f1': 0.0, 'support_f1': 0.0, 'official': 'HotpotQA invalid submission'}))
+    raise SystemExit(0)
 with tempfile.TemporaryDirectory() as temp:
     root = Path(temp); gold_path = root / 'gold.json'; pred_path = root / 'pred.json'
     gold_path.write_text(json.dumps([{'_id': gold['id'], 'answer': gold['answer'], 'supporting_facts': gold['supporting_facts']}]))

@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
+
 from .broker import Broker
 from .errors import ActionBenchError
 from .runner import ActionRunner
 
 
-AGENT_INSTRUCTIONS = """Solve the task using only the provided context and tool observations. Reply with exactly one JSON object. Every condition has `code`, which executes a Python JSONL program without network or model access; its code must read one line from stdin and emit {\"kind\":\"result\",\"output\":object}. Use {\"type\":\"code\",\"code\":string,\"input\":object} to invoke it. Use {\"type\":\"final\",\"answer\":string} to deliver the benchmark answer. If the catalog lists reusable procedures, follow each procedure's description and input_schema, then use {\"type\":\"procedure\",\"procedure_id\":string,\"input\":object}. Only if `llm_code` is listed may you use {\"type\":\"llm_code\",\"code\":string,\"input\":object}; that program imports ActionContext from action_sdk and calls ctx.emit. Never invent tool results."""
+AGENT_INSTRUCTIONS = """Solve the task using only the provided context and tool observations. Reply with exactly one JSON object, without Markdown. Every condition has `code`, which executes a Python JSONL program without network or model access; its code must read one line from stdin and emit {\"kind\":\"result\",\"output\":object}. Use {\"type\":\"code\",\"code\":string,\"input\":object} to invoke it. Use {\"type\":\"final\",\"answer\":string} to deliver the benchmark answer. If the catalog lists reusable procedures, follow each procedure's description and input_schema, then use {\"type\":\"procedure\",\"procedure_id\":string,\"input\":object}. Only if `llm_code` is listed may you use {\"type\":\"llm_code\",\"code\":string,\"input\":object}; its complete Python source must follow this protocol: import json,sys; from action_sdk import ActionContext; ctx=ActionContext(json.loads(sys.stdin.readline())[\"input\"]); text=ctx.call_llm(prompt, instructions=..., max_output_tokens=...); ctx.emit({\"text\":text}). `prompt` must be an actual string derived from ctx.input. Never invent tool results."""
 
 
 class AgentRunner:
@@ -45,6 +48,9 @@ class AgentRunner:
             procedure_id = decision.get("procedure_id")
             known = {item.get("id") for item in catalog}
             if kind == "procedure" and condition in {"skill_script", "action"} and procedure_id in known and package_dir:
+                schema = next(item["input_schema"] for item in catalog if item["id"] == procedure_id)
+                try: Draft202012Validator(schema).validate(input_data)
+                except ValidationError as exc: raise ActionBenchError(f"Procedure {procedure_id} input violates schema: {exc.message}") from exc
                 root = package_dir / "procedures" / procedure_id
                 output = self.tools.run(episode_id, root, f"procedure-{index}", input_data, allow_llm=condition == "action")
                 context["observations"].append({"tool": "procedure", "procedure_id": procedure_id, "output": output}); continue

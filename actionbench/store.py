@@ -46,10 +46,20 @@ class Store:
           campaign TEXT PRIMARY KEY, config_hash TEXT NOT NULL, config_json TEXT NOT NULL,
           status TEXT NOT NULL, created_at TEXT NOT NULL, frozen_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS campaign_inputs (
+          campaign TEXT PRIMARY KEY REFERENCES campaigns(campaign), manifest_hash TEXT NOT NULL,
+          harness_hash TEXT NOT NULL, image_hashes_json TEXT NOT NULL,
+          planned_test_episodes INTEGER NOT NULL, bound_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS budget_updates (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, campaign TEXT NOT NULL REFERENCES campaigns(campaign),
+          ceiling_usd REAL NOT NULL, created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS episodes (
           episode_id TEXT PRIMARY KEY, campaign TEXT NOT NULL REFERENCES campaigns(campaign),
           task_id TEXT NOT NULL, family TEXT NOT NULL, condition TEXT NOT NULL, replica INTEGER NOT NULL,
           package_hash TEXT, status TEXT NOT NULL, retryable INTEGER NOT NULL DEFAULT 1, attempts INTEGER NOT NULL DEFAULT 0,
+          duration_seconds REAL NOT NULL DEFAULT 0,
           final_artifact TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           UNIQUE(campaign,task_id,condition,replica,package_hash)
         );
@@ -64,7 +74,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS action_runs (
           action_run_id TEXT PRIMARY KEY, episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
           invocation_key TEXT NOT NULL, action_id TEXT NOT NULL, input_hash TEXT NOT NULL,
-          workspace TEXT NOT NULL, state TEXT NOT NULL, output_json TEXT, error TEXT,
+          workspace TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, output_json TEXT, error TEXT,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           UNIQUE(episode_id,invocation_key,input_hash)
         );
@@ -89,9 +99,11 @@ class Store:
             "ALTER TABLE episodes ADD COLUMN package_hash TEXT",
             "ALTER TABLE episodes ADD COLUMN retryable INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE episodes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE episodes ADD COLUMN duration_seconds REAL NOT NULL DEFAULT 0",
             "ALTER TABLE requests ADD COLUMN request_key TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE requests ADD COLUMN request_hash TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE requests ADD COLUMN reserved_input_tokens INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE action_runs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
         ):
             try: self.conn.execute(statement)
             except sqlite3.OperationalError: pass
@@ -113,6 +125,29 @@ class Store:
         if not row: raise ResumeConflict(f"Campaign does not exist: {campaign}")
         if row["status"] == "frozen": raise ResumeConflict("Campaign is frozen; create a new campaign to change it")
 
+    def bind_study(self, campaign: str, manifest_hash: str, harness_hash: str, image_hashes: dict[str, str], planned_test_episodes: int) -> None:
+        payload = json.dumps(image_hashes, sort_keys=True)
+        row = self.conn.execute("SELECT * FROM campaign_inputs WHERE campaign=?", (campaign,)).fetchone()
+        if row:
+            if (row["manifest_hash"], row["harness_hash"], row["image_hashes_json"], row["planned_test_episodes"]) != (manifest_hash, harness_hash, payload, planned_test_episodes):
+                raise ResumeConflict("Manifest, harness, or container image changed after campaign binding; start a new campaign")
+            return
+        self.assert_mutable(campaign)
+        self.conn.execute("INSERT INTO campaign_inputs VALUES (?,?,?,?,?,?)", (campaign, manifest_hash, harness_hash, payload, planned_test_episodes, now()))
+
+    def study_binding(self, campaign: str):
+        return self.conn.execute("SELECT * FROM campaign_inputs WHERE campaign=?", (campaign,)).fetchone()
+
+    def budget_ceiling(self, config: Config) -> float:
+        row = self.conn.execute("SELECT MAX(ceiling_usd) ceiling FROM budget_updates WHERE campaign=?", (config.campaign,)).fetchone()
+        return max(config.budget.usd, float(row["ceiling"])) if row and row["ceiling"] is not None else config.budget.usd
+
+    def raise_budget_ceiling(self, config: Config, ceiling_usd: float) -> float:
+        self.assert_mutable(config.campaign)
+        if ceiling_usd <= self.budget_ceiling(config): raise ResumeConflict("New campaign ceiling must exceed the current ceiling")
+        self.conn.execute("INSERT INTO budget_updates(campaign,ceiling_usd,created_at) VALUES(?,?,?)", (config.campaign, ceiling_usd, now()))
+        return ceiling_usd
+
     def event(self, episode_id: str | None, kind: str, payload: dict) -> None:
         self.conn.execute("INSERT INTO events(episode_id,kind,payload_json,created_at) VALUES(?,?,?,?)", (episode_id, kind, json.dumps(payload, sort_keys=True), now()))
 
@@ -129,15 +164,16 @@ class Store:
         if status == "running":
             self.conn.execute("UPDATE episodes SET status=?,attempts=attempts+1,error=?,updated_at=? WHERE episode_id=?", (status, error, now(), episode_id))
             return
-        if status == "failed" and retryable:
-            row = self.episode(episode_id)
-            retryable = bool(row and row["attempts"] < 2)
         self.conn.execute("UPDATE episodes SET status=?,retryable=?,final_artifact=COALESCE(?,final_artifact),error=?,updated_at=? WHERE episode_id=?", (status, int(retryable), final_artifact, error, now(), episode_id))
 
+    def save_answer(self, episode_id: str, path: str) -> None:
+        self.conn.execute("UPDATE episodes SET final_artifact=?,updated_at=? WHERE episode_id=?", (path, now(), episode_id))
+
+    def add_episode_duration(self, episode_id: str, seconds: float) -> None:
+        self.conn.execute("UPDATE episodes SET duration_seconds=duration_seconds+? WHERE episode_id=?", (max(0, seconds), episode_id))
+
     def resumable_episodes(self, campaign: str):
-        self.conn.execute("""UPDATE episodes SET status='failed',retryable=0,error=COALESCE(error,'Interrupted twice before completion'),updated_at=?
-                           WHERE campaign=? AND status='running' AND attempts>=2""", (now(), campaign))
-        return self.conn.execute("SELECT * FROM episodes WHERE campaign=? AND (status='queued' OR (status='running' AND attempts<2) OR (status='failed' AND retryable=1 AND attempts<2)) ORDER BY task_id,condition,replica", (campaign,)).fetchall()
+        return self.conn.execute("SELECT * FROM episodes WHERE campaign=? AND (status IN ('queued','running') OR (status='failed' AND retryable=1)) ORDER BY task_id,condition,replica", (campaign,)).fetchall()
 
     def save_package(self, campaign: str, family: str, replica: int, condition: str, package_hash: str, path: str, creation_episode_id: str) -> None:
         self.conn.execute("INSERT INTO generated_packages VALUES(?,?,?,?,?,?,?,?)", (campaign, family, replica, condition, package_hash, path, creation_episode_id, now()))
@@ -157,7 +193,11 @@ class Store:
                          VALUES(?,?,?,?, 'reserved',?,?,?,?)""", (request_id, episode_id, request_key, request_hash, json.dumps(request_json, sort_keys=True), reserved_usd, reserved_input_tokens, now()))
 
     def mark_submitted(self, request_id: str) -> None:
-        self.conn.execute("UPDATE requests SET state='submitted' WHERE request_id=? AND state='reserved'", (request_id,))
+        self.conn.execute("UPDATE requests SET state='submitted' WHERE request_id=? AND state IN ('reserved','rejected')", (request_id,))
+
+    def reject_request(self, request_id: str, detail: str) -> None:
+        self.conn.execute("UPDATE requests SET state='rejected',completed_at=? WHERE request_id=? AND state='submitted'", (now(), request_id))
+        self.event(None, "provider_rejection", {"request_id": request_id, "detail": detail})
 
     def complete_request(self, request_id: str, provider_request_id: str | None, response: dict, usage: dict, actual_usd: float) -> None:
         with self.tx() as conn:
@@ -174,7 +214,7 @@ class Store:
         return int(row["calls"]), int(row["inputs"]), int(row["outputs"])
 
     def campaign_spend(self, campaign: str) -> float:
-        row = self.conn.execute("SELECT COALESCE(SUM(COALESCE(actual_usd,reserved_usd)),0) value FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=?", (campaign,)).fetchone()
+        row = self.conn.execute("SELECT COALESCE(SUM(COALESCE(actual_usd,reserved_usd)),0) value FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=? AND r.state!='rejected'", (campaign,)).fetchone()
         return float(row["value"])
 
     def create_action_run(self, action_run_id: str, episode_id: str, invocation_key: str, action_id: str, input_hash: str, workspace: str):
@@ -186,8 +226,12 @@ class Store:
     def action_run(self, action_run_id: str):
         return self.conn.execute("SELECT * FROM action_runs WHERE action_run_id=?", (action_run_id,)).fetchone()
 
+    def action_run_attempts(self, action_run_id: str) -> int:
+        row = self.action_run(action_run_id)
+        return int(row["attempts"])
+
     def set_action_run(self, action_run_id: str, state: str, *, output: dict | None = None, error: str | None = None) -> None:
-        self.conn.execute("UPDATE action_runs SET state=?,output_json=COALESCE(?,output_json),error=?,updated_at=? WHERE action_run_id=?", (state, json.dumps(output, sort_keys=True) if output is not None else None, error, now(), action_run_id))
+        self.conn.execute("UPDATE action_runs SET state=?,attempts=attempts+?,output_json=COALESCE(?,output_json),error=?,updated_at=? WHERE action_run_id=?", (state, int(state == "running"), json.dumps(output, sort_keys=True) if output is not None else None, error, now(), action_run_id))
 
     def save_evaluation(self, episode_id: str, grader: str, score: dict) -> None:
         self.conn.execute("INSERT OR REPLACE INTO evaluations VALUES(?,?,?,?)", (episode_id, grader, json.dumps(score, sort_keys=True), now()))
@@ -196,4 +240,5 @@ class Store:
         row = self.conn.execute("SELECT status FROM campaigns WHERE campaign=?", (campaign,)).fetchone()
         if not row: return {"campaign": campaign, "exists": False}
         counts = self.conn.execute("SELECT status,COUNT(*) n FROM episodes WHERE campaign=? GROUP BY status", (campaign,)).fetchall()
-        return {"campaign": campaign, "exists": True, "status": row["status"], "episodes": {r["status"]: r["n"] for r in counts}, "accounted_usd": self.campaign_spend(campaign)}
+        binding = self.study_binding(campaign)
+        return {"campaign": campaign, "exists": True, "status": row["status"], "episodes": {r["status"]: r["n"] for r in counts}, "accounted_usd": self.campaign_spend(campaign), "manifest_hash": binding["manifest_hash"] if binding else None}

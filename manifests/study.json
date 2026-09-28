@@ -21,7 +21,9 @@
           "id": "mbppplus-000",
           "split": "development",
           "public_input": "public/mbppplus/mbppplus-000.json",
+          "public_sha256": "64f00f68025f9e405078f325e8075e0a025951ab8c3870d493e7f61d10f5cd3c",
           "reference_dir": "private/mbppplus/mbppplus-000",
+          "reference_sha256": "793a944949d9a4ef4b4ad6ee9d05f584a1d43792f7c27101815bb00ac26eee98",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -34,7 +36,9 @@
           "id": "mbppplus-001",
           "split": "development",
           "public_input": "public/mbppplus/mbppplus-001.json",
+          "public_sha256": "7268233238e5122ebddc44627322a2fbfca81d283cfd2dfe7addd46d14bf8664",
           "reference_dir": "private/mbppplus/mbppplus-001",
+          "reference_sha256": "a2680bba1ac85a07fd215ff44eb4629027dd5c206dc95f97ea6ef6d5955796ee",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -47,7 +51,9 @@
           "id": "mbppplus-002",
           "split": "development",
           "public_input": "public/mbppplus/mbppplus-002.json",
+          "public_sha256": "b6b2938d574f989cd044e15f499ef0b07973071e11503823c3b2df6a58565b3d",
           "reference_dir": "private/mbppplus/mbppplus-002",
+          "reference_sha256": "bc881e713e9c9a184595bf07bf156b2ed6e1d0a5f03b629b4481db257581bf7f",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -60,7 +66,9 @@
           "id": "mbppplus-003",
           "split": "development",
           "public_input": "public/mbppplus/mbppplus-003.json",
+          "public_sha256": "f6975a9c4c6bab3b39413011b228de81a2dbc32af608c17d078c7f0a30da9324",
           "reference_dir": "private/mbppplus/mbppplus-003",
+          "reference_sha256": "6422605cfcc1cf34d3575488512cb0c24c603555237eb270362115a676cdb959",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -73,7 +81,9 @@
           "id": "mbppplus-004",
           "split": "development",
           "public_input": "public/mbppplus/mbppplus-004.json",
+          "public_sha256": "118f2a49abceb843d4876a5c6f44fe275d78394208452838fcf5712123926ab7",
           "reference_dir": "private/mbppplus/mbppplus-004",
+          "reference_sha256": "4299f58dcd107ab483fd390eb14708803a578bb9858c868476f23acbaac18467",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -86,7 +96,9 @@
           "id": "mbppplus-005",
           "split": "development",
           "public_input": "public/mbppplus/mbppplus-005.json",
+          "public_sha256": "370658d54bc54fb43a78bdf26c13c2e74ec93c2e343e05b0e09538902b2ed47a",
           "reference_dir": "private/mbppplus/mbppplus-005",
+          "reference_sha256": "ff83d3446e67de121002d46efdfc6d346a17dbae75426cb4dce99e0b1c2c481b",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -99,7 +111,9 @@
           "id": "mbppplus-006",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-006.json",
+          "public_sha256": "4e3c90d2c6df022857b5e863e64393e89076f29adc773c2f690650c6d5cc5929",
           "reference_dir": "private/mbppplus/mbppplus-006",
+          "reference_sha256": "fddc193032718d7aeb4e0a772c5944bb2eab375702826b604f98ec16c8ca6bdc",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -112,7 +126,9 @@
           "id": "mbppplus-007",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-007.json",
+          "public_sha256": "9149490d4c52a2d8bd918bebd3685ad899a54e2d8b4d299e0a8cea7a944c3e15",
           "reference_dir": "private/mbppplus/mbppplus-007",
+          "reference_sha256": "69341998612f6e6b1cce3c1f57815ff48e29c13a968b546bee25f6125e53c468",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -125,7 +141,9 @@
           "id": "mbppplus-008",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-008.json",
+          "public_sha256": "3bef0ed593261f6ef4d5d2292548ecc6192523f3780f20ba800678bdc57174a6",
           "reference_dir": "private/mbppplus/mbppplus-008",
+          "reference_sha256": "82acb67b62df37e39ad4652bf1add7e0928e2d3d32618f6adee33210a4584758",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -138,7 +156,9 @@
           "id": "mbppplus-009",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-009.json",
+          "public_sha256": "9ee631c947cf8fce886043a470458d0a317c45731678e444aed73efa8b0e4c25",
           "reference_dir": "private/mbppplus/mbppplus-009",
+          "reference_sha256": "1d91e03a654159efe2e4836889530bba56cb5ed13746668f7bc609f61e1d1b81",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -151,7 +171,9 @@
           "id": "mbppplus-010",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-010.json",
+          "public_sha256": "6c942f6341fef1f21c5432164045aad87fcbb26f1f4096354b7c56aa50fb9dd4",
           "reference_dir": "private/mbppplus/mbppplus-010",
+          "reference_sha256": "d68fc91f7e78733382459c97211bc921c8044da0023b84b52a795f0bc8883787",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -164,7 +186,9 @@
           "id": "mbppplus-011",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-011.json",
+          "public_sha256": "348354b00f3dd9b3850a25560035d0a47a6aae8bb90d5da443396ab2dc3b21ba",
           "reference_dir": "private/mbppplus/mbppplus-011",
+          "reference_sha256": "2f30dac26cf0e430658b8ac6cf394855176f3cd53eaf5a7852b66a9dc1337123",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -177,7 +201,9 @@
           "id": "mbppplus-012",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-012.json",
+          "public_sha256": "9abfe9bd0e700df2f1e40787feccc1639d0d9b0bd0e3b8c59fa2e6541e248d35",
           "reference_dir": "private/mbppplus/mbppplus-012",
+          "reference_sha256": "f29a369f77f725917a9fa711e3ec14c2bc471b144e44b714ff9e6ba5305b755c",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -190,7 +216,9 @@
           "id": "mbppplus-013",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-013.json",
+          "public_sha256": "1f22c5351b9a56b904e9fe9da1fdb27cd04bb3f6e72fa8ba5666ed4e8bbe5550",
           "reference_dir": "private/mbppplus/mbppplus-013",
+          "reference_sha256": "b8b478cc8e20f90899d7a6ed8b0fdc9063409eacfc6ae303f2d77a1c5bf8a59b",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -203,7 +231,9 @@
           "id": "mbppplus-014",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-014.json",
+          "public_sha256": "ff61664725923e62a5be664dd28100480dc3d137debf0702aba8e4c055f4dc39",
           "reference_dir": "private/mbppplus/mbppplus-014",
+          "reference_sha256": "2ecd7b0b3da71fb315addb0ca00c229b207dcb6ac00e9ff06e896d5b79cde105",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -216,7 +246,9 @@
           "id": "mbppplus-015",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-015.json",
+          "public_sha256": "7e48e9c107a10fd54427b99a2871c483c0d63cc63a17b9d8d752e859823809ee",
           "reference_dir": "private/mbppplus/mbppplus-015",
+          "reference_sha256": "137bfa281012aaaec4370bda832b423bb86f8fbb7ef4c963d38d8f83da358f02",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -229,7 +261,9 @@
           "id": "mbppplus-016",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-016.json",
+          "public_sha256": "27f4463eb66a824c9a030dc7cdc50f20609ff33ed35d4d5de48f1628f96de90f",
           "reference_dir": "private/mbppplus/mbppplus-016",
+          "reference_sha256": "d43616b8088e7ff623315fffd01ad09c97b74d834a722a7bd07f44290f379d5c",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -242,7 +276,9 @@
           "id": "mbppplus-017",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-017.json",
+          "public_sha256": "ef809a18ad30dca2f642f48abb37bc64beb40cc1e02826fab273ba42f4ba4ed7",
           "reference_dir": "private/mbppplus/mbppplus-017",
+          "reference_sha256": "39233ecd8e35c789f2b926e48e706bdcfedf9149310442f311b2377d8a47ccf9",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -255,7 +291,9 @@
           "id": "mbppplus-018",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-018.json",
+          "public_sha256": "6fa2e395bf62ffceb8dc5813ec9df397797e8c558c19868fa8ca6263f3f4844a",
           "reference_dir": "private/mbppplus/mbppplus-018",
+          "reference_sha256": "5c21c92cfeb358b676df3184738825c7c5fa050c6d3f236a58878d9734d443d0",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -268,7 +306,9 @@
           "id": "mbppplus-019",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-019.json",
+          "public_sha256": "ee171dddac2c7727d86a90a3cfd68c14aa8ef5323e3d01110aba9b18ee596063",
           "reference_dir": "private/mbppplus/mbppplus-019",
+          "reference_sha256": "b79484ef4a300e6c8e2f8f1a79e1f029a1422dbc59bb0ddb3a07c2de1ab44480",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -281,7 +321,9 @@
           "id": "mbppplus-020",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-020.json",
+          "public_sha256": "5bbe3fe142bc84aec3f2e2e189b6b26418d091aba3bc7c5c5b547c1942cb5fe8",
           "reference_dir": "private/mbppplus/mbppplus-020",
+          "reference_sha256": "6f47d015d3343b87986a127f472feecf2848fc648cf9d908d823f5f1efd9d8dc",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -294,7 +336,9 @@
           "id": "mbppplus-021",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-021.json",
+          "public_sha256": "0a50225b496bdcc1dce08dcd81cac49eb8d63879a5a4d751cfc4c8981ead2101",
           "reference_dir": "private/mbppplus/mbppplus-021",
+          "reference_sha256": "128cbd676e2bef75e837b55782380faf1537db5b82e04e226a0db76b0ae6cf4f",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -307,7 +351,9 @@
           "id": "mbppplus-022",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-022.json",
+          "public_sha256": "7a3bf3cc6ab3b9c1502a61c7844b549de7bffd3fe9f15b793f9b4e04c7e5e8c9",
           "reference_dir": "private/mbppplus/mbppplus-022",
+          "reference_sha256": "490b444bb4ccfa312ab207a3646882ccef3f0e1803ca7dbaa8c03e00f40ee6c0",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -320,7 +366,9 @@
           "id": "mbppplus-023",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-023.json",
+          "public_sha256": "a01eea0d77d4bbc2e7e8f9c24035ab5f0b4fa690511d6f9c0b13dd4c3c45c0cb",
           "reference_dir": "private/mbppplus/mbppplus-023",
+          "reference_sha256": "2ec6a5a56f0ee904275a89b3582dcee383e734eb4225507b6b4370d08ea04854",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -333,7 +381,9 @@
           "id": "mbppplus-024",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-024.json",
+          "public_sha256": "b04bdeb216f9c242e8892769ab921e31844dea83bf1996094d923f57bf3dc28c",
           "reference_dir": "private/mbppplus/mbppplus-024",
+          "reference_sha256": "02f671c29b8ab6285920abd374d5c034afaf600e9754c7e524950ba437b3e11d",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -346,7 +396,9 @@
           "id": "mbppplus-025",
           "split": "test",
           "public_input": "public/mbppplus/mbppplus-025.json",
+          "public_sha256": "565e023f55d1bd88b60c52a9a0d5ba7cdab3bf73ca6a04eecb300bc612f9e2d0",
           "reference_dir": "private/mbppplus/mbppplus-025",
+          "reference_sha256": "747b275a86c6dcaf4a5d0693e17ff1117d6e7ba71bb7f867c353b45b30f97054",
           "grader": {
             "image": "actionbench-mbppplus:v1",
             "command": [
@@ -366,7 +418,9 @@
           "id": "hotpotqa-000",
           "split": "development",
           "public_input": "public/hotpotqa/hotpotqa-000.json",
+          "public_sha256": "8a5aac5f881ffec40a430f20d305b10f1340422acade1570f1ac1d801b4d3e73",
           "reference_dir": "private/hotpotqa/hotpotqa-000",
+          "reference_sha256": "e7c8855eb91c2df7730d6fc3e7757cc636ca51d55d4b442ef621d1414734cba2",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -379,7 +433,9 @@
           "id": "hotpotqa-001",
           "split": "development",
           "public_input": "public/hotpotqa/hotpotqa-001.json",
+          "public_sha256": "7df11406f7b1db2d0a21a215ccf957304315b258e334ff449fa026cbdb2449d1",
           "reference_dir": "private/hotpotqa/hotpotqa-001",
+          "reference_sha256": "1c8fb05011ca8544220d6f49326d8adb19efa5d190ff0494959c0c77e983e4c2",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -392,7 +448,9 @@
           "id": "hotpotqa-002",
           "split": "development",
           "public_input": "public/hotpotqa/hotpotqa-002.json",
+          "public_sha256": "09c6cf0209b348907cf53b9097e970577e5bd692a56397e3d00a65f442abbc78",
           "reference_dir": "private/hotpotqa/hotpotqa-002",
+          "reference_sha256": "16d15822225df668a23b9992f24a13529583f34e0e89e63c943a50277b7199c2",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -405,7 +463,9 @@
           "id": "hotpotqa-003",
           "split": "development",
           "public_input": "public/hotpotqa/hotpotqa-003.json",
+          "public_sha256": "2e2ca72ba8bd2a6af4ab17f2bcaeec9b5102665e914dc6ff1a70dcd15afc2265",
           "reference_dir": "private/hotpotqa/hotpotqa-003",
+          "reference_sha256": "1775f2e015a68310f279fac319efc16bd021b46e8e7dcdd1f5d11dff30142577",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -418,7 +478,9 @@
           "id": "hotpotqa-004",
           "split": "development",
           "public_input": "public/hotpotqa/hotpotqa-004.json",
+          "public_sha256": "b3de018fcec73ab66a0091598776808068df5d90934f9d42521fc2de42f83474",
           "reference_dir": "private/hotpotqa/hotpotqa-004",
+          "reference_sha256": "f519120ac3b47e64ce6f99369d6cc7ccf47597ef6cf4cb4c8986c1d367ffee04",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -431,7 +493,9 @@
           "id": "hotpotqa-005",
           "split": "development",
           "public_input": "public/hotpotqa/hotpotqa-005.json",
+          "public_sha256": "76630e5a33e8204b3af61efac13846b15a2ab84c5bc515661fa007103d343e48",
           "reference_dir": "private/hotpotqa/hotpotqa-005",
+          "reference_sha256": "9a31d495e8f0821e1f1f25e712946181c66b237e33656c50de0ff9fd71c0233f",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -444,7 +508,9 @@
           "id": "hotpotqa-006",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-006.json",
+          "public_sha256": "57335ad0d357af178c5eaa78d30d95a277c123fb26517fcfcf84a0322e484de9",
           "reference_dir": "private/hotpotqa/hotpotqa-006",
+          "reference_sha256": "12dd4acbb3238297c05e8df9560483579c5633d0b2991b4ebd06783b72b0c359",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -457,7 +523,9 @@
           "id": "hotpotqa-007",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-007.json",
+          "public_sha256": "1d9b9e54a700daf281a47f791fca4361c549909449f7bc0e032efba1ac118c1c",
           "reference_dir": "private/hotpotqa/hotpotqa-007",
+          "reference_sha256": "fe3f5bfd9172787e3737de9638851c6c0d1cdf34b919ca299ff7a3ade8aa61e8",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -470,7 +538,9 @@
           "id": "hotpotqa-008",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-008.json",
+          "public_sha256": "6ec2c50f2096bee1386d85bfe7792b1893477072148d1b34ece3e3901a83dbcf",
           "reference_dir": "private/hotpotqa/hotpotqa-008",
+          "reference_sha256": "cf268fb8905971a910f3fbf36498c892b9cb1eb162209b0114e26ff890d2ade1",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -483,7 +553,9 @@
           "id": "hotpotqa-009",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-009.json",
+          "public_sha256": "3e567051b400c3ce71e46407407bc0d5c678f3daa409e9db43729e1cbcad8278",
           "reference_dir": "private/hotpotqa/hotpotqa-009",
+          "reference_sha256": "4283add96a56d1805df56266bbdeba9624208c3c163f5124841be1535fc36e62",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -496,7 +568,9 @@
           "id": "hotpotqa-010",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-010.json",
+          "public_sha256": "1816e2a97a946c33a04c5444dcf4f8b966ded56933b032d402f38991a948fe12",
           "reference_dir": "private/hotpotqa/hotpotqa-010",
+          "reference_sha256": "f845f0c05fd42b8ce5aedbcc7d3da8c8309f85576c3c9820c3e0697058faa9bc",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -509,7 +583,9 @@
           "id": "hotpotqa-011",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-011.json",
+          "public_sha256": "ee36187a7a50281b40f29cc5d9f28cd35161d4254f149f28be617f7783a07c69",
           "reference_dir": "private/hotpotqa/hotpotqa-011",
+          "reference_sha256": "366a42782edb2b15edb5de0918efb858e6a396a272bce23411883b359eee4ea0",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -522,7 +598,9 @@
           "id": "hotpotqa-012",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-012.json",
+          "public_sha256": "ed00c4e08a17881024fdc83d606aef8d60062aee7b1d36558c9d8e3e61a687c3",
           "reference_dir": "private/hotpotqa/hotpotqa-012",
+          "reference_sha256": "8ff00c5f10cd7df6c62d40938a98cba70c5974cb63d8a832241beddb216a9d3d",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -535,7 +613,9 @@
           "id": "hotpotqa-013",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-013.json",
+          "public_sha256": "dbb4b30d4f600bd0a4c02c848866dad63e7c735aec0e8df0a8025d6b040d4fda",
           "reference_dir": "private/hotpotqa/hotpotqa-013",
+          "reference_sha256": "6bbbdf392918de6cb95fcaa7c8ec4dcc9bb85b4eb85ea233276c6987cce6fea1",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -548,7 +628,9 @@
           "id": "hotpotqa-014",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-014.json",
+          "public_sha256": "3e62e403433550a09cf5ca47969d1b2e5e582c9873d72840273dc5f5060738ce",
           "reference_dir": "private/hotpotqa/hotpotqa-014",
+          "reference_sha256": "d526300cda18ebdd222288a9f97d79cf576c10dd6b1adce3f8318c1f3ea13de0",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -561,7 +643,9 @@
           "id": "hotpotqa-015",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-015.json",
+          "public_sha256": "8ca2a5eaa24b55b2c0f80257cf0e5a3a83c91d1519a4f9bf1957563204400aee",
           "reference_dir": "private/hotpotqa/hotpotqa-015",
+          "reference_sha256": "2fed13f87325d7b37eda07fef133e26e70dc3d2fc70c97532dea0a31639fdded",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -574,7 +658,9 @@
           "id": "hotpotqa-016",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-016.json",
+          "public_sha256": "afb300d7a64c4119fa7ddb2a6ba9b2799ffb74ca10d1094ef1ea6cc69130c7e7",
           "reference_dir": "private/hotpotqa/hotpotqa-016",
+          "reference_sha256": "62585609c3ebd78659fcba0554906d4cea362e6b58e3a86f50501fc68065219c",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -587,7 +673,9 @@
           "id": "hotpotqa-017",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-017.json",
+          "public_sha256": "f514c9ab42eaba1b9d5de4e45cc94c5d24d7f1df7d5a6f91cf1d4ae7e5010c7b",
           "reference_dir": "private/hotpotqa/hotpotqa-017",
+          "reference_sha256": "34e0c32af3d8706ad6c694d7a010b07a0ce4e3ac2e03861bdc9afb05430d7719",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -600,7 +688,9 @@
           "id": "hotpotqa-018",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-018.json",
+          "public_sha256": "62c8c411b0dfd1e2fcb56108c6b8ea33427fe2afbdca080ce67371a1f24c9045",
           "reference_dir": "private/hotpotqa/hotpotqa-018",
+          "reference_sha256": "ef0fd85a87fa707829087b6be2da6fcd42e70e1ab85e175c8100546e612450d7",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -613,7 +703,9 @@
           "id": "hotpotqa-019",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-019.json",
+          "public_sha256": "2e4ef54b6381b72b3503d06a3e3744466b0b223df62f91757078ed172b8e06c3",
           "reference_dir": "private/hotpotqa/hotpotqa-019",
+          "reference_sha256": "dbd9717883016099b963c976562354626dc8db64f70a44bc616b2e1ea6df4b72",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -626,7 +718,9 @@
           "id": "hotpotqa-020",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-020.json",
+          "public_sha256": "e8929600ad4a0db9ad71cd775a2c299ededa5de88308ab033eec89e054a37010",
           "reference_dir": "private/hotpotqa/hotpotqa-020",
+          "reference_sha256": "87fbdeddcb138531aca1dc1982042616bf9138f306c79d16d6a96c81bc2f5250",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -639,7 +733,9 @@
           "id": "hotpotqa-021",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-021.json",
+          "public_sha256": "02986c12b21e9136a634d08dea076cc1f062a49656b277c75f61afd9929e7c8e",
           "reference_dir": "private/hotpotqa/hotpotqa-021",
+          "reference_sha256": "d17dd56db0b605146d934916cafa2b1e723f4102eeb78f56723fea4860613253",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -652,7 +748,9 @@
           "id": "hotpotqa-022",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-022.json",
+          "public_sha256": "97e8a91b2216423feb6f8c1a0f6923e0d9a2d6abf2ae8725608fb04369488992",
           "reference_dir": "private/hotpotqa/hotpotqa-022",
+          "reference_sha256": "7757f660679751e7844e0686f05fc23920438111c5d45118ea1b2d1326505049",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -665,7 +763,9 @@
           "id": "hotpotqa-023",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-023.json",
+          "public_sha256": "09a2f115b60f896c3e36fc0c4cf2469e72e7a4eba953962a5b68bc05b7563773",
           "reference_dir": "private/hotpotqa/hotpotqa-023",
+          "reference_sha256": "39dc9e8bd38024b35e42732503533741b4acbaf43ca1d9bc9c190198bd7ad3ce",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -678,7 +778,9 @@
           "id": "hotpotqa-024",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-024.json",
+          "public_sha256": "d24b9d1dfd730e46281034539cc0cf7254c5711fdd007af9bce2b08887e92194",
           "reference_dir": "private/hotpotqa/hotpotqa-024",
+          "reference_sha256": "e53838dd1a194127ce6cdfa4dba380a1c9d364c020eca128a73f9925627ff2f9",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [
@@ -691,7 +793,9 @@
           "id": "hotpotqa-025",
           "split": "test",
           "public_input": "public/hotpotqa/hotpotqa-025.json",
+          "public_sha256": "ecc9f84b34133fe9ca98cea2747f29d3ec4c1e16b879e0d660e4b1c826e28a12",
           "reference_dir": "private/hotpotqa/hotpotqa-025",
+          "reference_sha256": "ffb3ab6f9230617351c15cd734a880847c2d2e3c723b5d6a0515b713ad0fcaef",
           "grader": {
             "image": "actionbench-hotpot:v1",
             "command": [

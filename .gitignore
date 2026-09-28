@@ -7,3 +7,4 @@ artifacts/
 data/
 *.sqlite3
 .env
+*.egg-info/

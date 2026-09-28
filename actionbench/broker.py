@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import Config, api_key
-from .errors import BudgetExceeded, ConfigurationError, UnknownProviderOutcome
+from .errors import BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome
 from .store import Store
 
 
@@ -45,7 +45,9 @@ class OpenAIResponsesClient:
                 return json.loads(response.read())
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")[:1000]
-            raise ConfigurationError(f"Provider rejected request ({exc.code}): {detail}") from exc
+            if exc.code >= 500:
+                raise UnknownProviderOutcome(f"Provider server error after submission ({exc.code}): {detail}") from exc
+            raise InfrastructureError(f"Provider rejected request ({exc.code}): {detail}") from exc
         except urllib.error.URLError as exc:
             raise UnknownProviderOutcome(f"Network outcome is unknown: {exc.reason}") from exc
 
@@ -60,9 +62,17 @@ class Broker:
         return (input_tokens * p.input_usd_per_million + max_output_tokens * p.output_usd_per_million) / 1_000_000
 
     def _usage(self, raw: dict) -> dict[str, int]:
-        usage = raw.get("usage") or {}
+        if not isinstance(raw, dict) or not isinstance(raw.get("usage"), dict):
+            raise UnknownProviderOutcome("Provider response lacks auditable token usage")
+        usage = raw["usage"]
         details = usage.get("input_tokens_details") or {}
-        return {"input_tokens": int(usage.get("input_tokens", 0)), "cached_input_tokens": int(details.get("cached_tokens", 0)), "output_tokens": int(usage.get("output_tokens", 0))}
+        try:
+            tokens = {"input_tokens": int(usage["input_tokens"]), "cached_input_tokens": int(details.get("cached_tokens", 0)), "output_tokens": int(usage["output_tokens"])}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise UnknownProviderOutcome("Provider response has malformed token usage") from exc
+        if tokens["input_tokens"] < 1 or tokens["output_tokens"] < 0 or not 0 <= tokens["cached_input_tokens"] <= tokens["input_tokens"]:
+            raise UnknownProviderOutcome("Provider response has impossible token usage")
+        return tokens
 
     def _cost(self, usage: dict[str, int]) -> float:
         p = self.config.provider
@@ -80,6 +90,16 @@ class Broker:
                     chunks.append(content.get("text", ""))
         return "".join(chunks)
 
+    def _complete(self, request_id: str, raw: dict) -> ModelResult:
+        try:
+            usage = self._usage(raw)
+        except UnknownProviderOutcome as exc:
+            self.store.unknown_request(request_id, str(exc))
+            raise
+        actual = self._cost(usage)
+        self.store.complete_request(request_id, raw.get("id"), raw, usage, actual)
+        return ModelResult(self._text(raw), raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual)
+
     def call(self, episode_id: str, request_key: str, instructions: str, input_text: str, max_output_tokens: int) -> ModelResult:
         """Issue or recover a request. Reuse is allowed only for byte-identical payloads."""
         payload = {"model": self.config.provider.model, "instructions": instructions, "input": input_text, "max_output_tokens": max_output_tokens, "store": False}
@@ -94,7 +114,7 @@ class Broker:
             if existing["state"] == "submitted":
                 self.store.unknown_request(existing["request_id"], "Coordinator restarted after request submission")
                 raise UnknownProviderOutcome(f"Request {request_key} was submitted before interruption and is unknown")
-            if existing["state"] == "reserved":
+            if existing["state"] in {"reserved", "rejected"}:
                 # Reservation is durably committed before the API call. It is safe
                 # to continue it because no provider request has been sent yet.
                 request_id = existing["request_id"]
@@ -103,9 +123,9 @@ class Broker:
                     raw = self.client.request(payload)
                 except UnknownProviderOutcome as exc:
                     self.store.unknown_request(request_id, str(exc)); raise
-                usage = self._usage(raw); actual = self._cost(usage)
-                self.store.complete_request(request_id, raw.get("id"), raw, usage, actual)
-                return ModelResult(self._text(raw), raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual)
+                except InfrastructureError as exc:
+                    self.store.reject_request(request_id, str(exc)); raise
+                return self._complete(request_id, raw)
             raise UnknownProviderOutcome(f"Request {request_key} has unsupported stored state {existing['state']}")
         if max_output_tokens < 1 or max_output_tokens > self.config.budget.max_output_tokens:
             raise BudgetExceeded("Requested output tokens exceed the campaign limit")
@@ -118,8 +138,8 @@ class Broker:
         if used_output + max_output_tokens > self.config.budget.max_output_tokens:
             raise BudgetExceeded("Episode output-token budget would be exceeded")
         reserve = self.estimate_usd(estimated_input, max_output_tokens)
-        if self.store.campaign_spend(self.config.campaign) + reserve > self.config.budget.usd:
-            raise BudgetExceeded("Campaign dollar budget would be exceeded")
+        if self.store.campaign_spend(self.config.campaign) + reserve > self.store.budget_ceiling(self.config):
+            raise CampaignBudgetExceeded("Campaign dollar budget would be exceeded")
         request_id = str(uuid.uuid4())
         self.store.reserve_request(request_id, episode_id, request_key, request_hash, payload, reserve, estimated_input)
         self.store.mark_submitted(request_id)
@@ -128,7 +148,7 @@ class Broker:
         except UnknownProviderOutcome as exc:
             self.store.unknown_request(request_id, str(exc))
             raise
-        usage = self._usage(raw)
-        actual = self._cost(usage)
-        self.store.complete_request(request_id, raw.get("id"), raw, usage, actual)
-        return ModelResult(self._text(raw), raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual)
+        except InfrastructureError as exc:
+            self.store.reject_request(request_id, str(exc))
+            raise
+        return self._complete(request_id, raw)

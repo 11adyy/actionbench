@@ -87,7 +87,7 @@ def prepare_study(dataset_root: Path, manifest_path: Path, *, development_per_fa
             public_path = dataset_root / public_rel; reference_path = dataset_root / private_rel
             public_path.parent.mkdir(parents=True, exist_ok=True); reference_path.mkdir(parents=True, exist_ok=True)
             public_path.write_text(json.dumps(public, ensure_ascii=False)); (reference_path / "gold.json").write_text(json.dumps(reference, ensure_ascii=False))
-            tasks.append({"id": task_id, "split": split, "public_input": public_rel.as_posix(), "reference_dir": private_rel.as_posix(), "grader": {"image": image, "command": ["python", "/grader/grade.py"]}})
+            tasks.append({"id": task_id, "split": split, "public_input": public_rel.as_posix(), "public_sha256": hashlib.sha256(public_path.read_bytes()).hexdigest(), "reference_dir": private_rel.as_posix(), "reference_sha256": hashlib.sha256((reference_path / "gold.json").read_bytes()).hexdigest(), "grader": {"image": image, "command": ["python", "/grader/grade.py"]}})
         families.append({"id": family, "creator_brief": _brief(family), "demonstrations": [], "tasks": tasks})
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps({"name": "actionbench-study-v2", "dataset_lock": lock, "families": families}, indent=2))
