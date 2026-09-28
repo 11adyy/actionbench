@@ -32,9 +32,11 @@ class AgentRunner:
         if condition in {"skill_script", "action"}: enabled.append("procedure")
         context = {"task": task_input, "skill": skill, "condition": condition, "tools": enabled, "procedures": catalog, "observations": []}
         for index in range(self.broker.config.budget.max_llm_calls):
-            result = self.broker.call(episode_id, f"agent-decision-{index}", AGENT_INSTRUCTIONS, json.dumps(context, sort_keys=True), min(2048, self.broker.config.budget.max_output_tokens))
+            available = self.broker.remaining_output_tokens(episode_id) if hasattr(self.broker, "remaining_output_tokens") else self.broker.config.budget.max_output_tokens
+            result = self.broker.call(episode_id, f"agent-decision-{index}", AGENT_INSTRUCTIONS, json.dumps(context, sort_keys=True), min(2048, available))
             try: decision = json.loads(result.text)
             except json.JSONDecodeError as exc: raise ActionBenchError(f"Agent emitted non-JSON: {result.text[:300]}") from exc
+            if not isinstance(decision, dict): raise ActionBenchError("Agent decision must be a JSON object")
             kind = decision.get("type")
             if kind == "final" and isinstance(decision.get("answer"), str): return decision["answer"]
             input_data = decision.get("input") or {}

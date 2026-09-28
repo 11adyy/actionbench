@@ -41,10 +41,16 @@ class ProcessIntegrationTests(unittest.TestCase):
             with self.assertRaisesRegex(ActionBenchError, "wall-clock"):
                 runner.execute("e", "r", root, [], {})
 
+    def test_large_input_to_nonreader_respects_wall_clock(self):
+        with tempfile.TemporaryDirectory() as d:
+            runner, root = self.make(Path(d), "import time\ntime.sleep(30)\n", seconds=1)
+            with self.assertRaisesRegex(ActionBenchError, "wall-clock"):
+                runner.execute("e", "r", root, [], {"large": "x" * 2_000_000})
+
     def test_real_llm_pipe_exchange(self):
         code = "import sys,json\nsys.stdin.readline()\nprint(json.dumps({'kind':'llm_request','step':'s','instructions':'i','prompt':'p','max_output_tokens':5}),flush=True)\nx=json.loads(sys.stdin.readline())\nprint(json.dumps({'kind':'result','output':{'text':x['text']}}),flush=True)\n"
         class Broker:
-            def call(self, episode, step, instructions, prompt, maximum):
+            def call(self, episode, step, instructions, prompt, maximum, *, timeout_seconds=None):
                 self.observed = (episode, step, instructions, prompt, maximum)
                 return type("Result", (), {"text": "real pipe"})()
         with tempfile.TemporaryDirectory() as d:

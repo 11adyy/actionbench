@@ -40,12 +40,20 @@ class ContainerRunner:
         selector = selectors.DefaultSelector()
         selector.register(proc.stdout, selectors.EVENT_READ)
         selector.register(proc.stderr, selectors.EVENT_READ)
+        os.set_blocking(proc.stdin.fileno(), False)
+        outgoing = bytearray((json.dumps({"kind": "input", "input": input_data}) + "\n").encode())
+        selector.register(proc.stdin, selectors.EVENT_WRITE)
         pending = bytearray(); stderr = bytearray(); total_stdout = 0; output = None
         try:
-            proc.stdin.write((json.dumps({"kind": "input", "input": input_data}) + "\n").encode()); proc.stdin.flush()
             while selector.get_map():
                 if time.monotonic() >= deadline: raise ActionBenchError("Program exceeded wall-clock limit")
                 for key, _ in selector.select(min(.25, max(0, deadline - time.monotonic()))):
+                    if key.fileobj is proc.stdin:
+                        try: written = os.write(proc.stdin.fileno(), outgoing)
+                        except BrokenPipeError as exc: raise ActionBenchError("Program closed its input pipe") from exc
+                        del outgoing[:written]
+                        if not outgoing: selector.unregister(proc.stdin)
+                        continue
                     chunk = os.read(key.fileobj.fileno(), 65536)
                     if not chunk:
                         selector.unregister(key.fileobj); continue
@@ -65,8 +73,11 @@ class ContainerRunner:
                             if not allow_llm: raise ActionBenchError("This condition cannot request an LLM from generated code")
                             step = str(message.get("step", ""))
                             if not step: raise ActionBenchError("LLM request is missing a stable step id")
-                            result = self.broker.call(episode_id, f"{run_id}:{step}", str(message.get("instructions", "")), str(message.get("prompt", "")), int(message.get("max_output_tokens", 0)))
-                            proc.stdin.write((json.dumps({"kind": "llm_response", "text": result.text}) + "\n").encode()); proc.stdin.flush()
+                            result = self.broker.call(episode_id, f"{run_id}:{step}", str(message.get("instructions", "")), str(message.get("prompt", "")), int(message.get("max_output_tokens", 0)), timeout_seconds=max(.001, deadline-time.monotonic()))
+                            if time.monotonic() >= deadline: raise ActionBenchError("Program exceeded wall-clock limit")
+                            outgoing.extend((json.dumps({"kind": "llm_response", "text": result.text}) + "\n").encode())
+                            try: selector.get_key(proc.stdin)
+                            except KeyError: selector.register(proc.stdin, selectors.EVENT_WRITE)
                         elif message.get("kind") == "result":
                             if output is not None or not isinstance(message.get("output"), dict): raise ActionBenchError("Program emitted duplicate or invalid result")
                             output = message["output"]
