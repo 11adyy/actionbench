@@ -1,9 +1,9 @@
 {
-  "name": "actionbench-study-v1",
+  "name": "actionbench-study-v2",
   "dataset_lock": {
-    "mbpp_sanitized": {
-      "url": "https://github.com/google-research/google-research/raw/master/mbpp/sanitized-mbpp.json",
-      "sha256": "ca95deaa9a01ef0a6f439f88bcf0dd3db3563d22f22aad6cae04ebb9a8d8c8e9"
+    "mbpp_plus_v0.1.0": {
+      "url": "https://github.com/ganler/release/releases/download/humanevalplus/MbppPlus-v0.1.0.jsonl.gz",
+      "sha256": "57d639e77667d88930052b2b07212011c25c0bab94dfc1f19d15e1f7f558bfa9"
     },
     "hotpot_dev_distractor": {
       "url": "https://huggingface.co/datasets/namlh2004/hotpotqa/resolve/main/hotpot_dev_distractor_v1.json?download=true",

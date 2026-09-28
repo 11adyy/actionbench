@@ -40,7 +40,7 @@ This gives three direct comparisons: `action - skill` tests the full proposal; `
 
 ## Data contract
 
-`datasets prepare` builds a seeded study with MBPP+ and HotpotQA distractor data, including development and test splits. It records source URLs and SHA-256 hashes in `data/dataset-lock.json`. The MBPP+ image runs EvalPlus; the HotpotQA image imports its official evaluator. Reference material is mounted only into the grader container.
+`datasets prepare` builds a seeded study with the official EvalPlus MBPP+ v0.1.0 prompts and HotpotQA distractor data, including development and test splits. It records source URLs and SHA-256 hashes in `data/dataset-lock.json`. The MBPP+ image runs EvalPlus and checks that the public prompt exactly matches its official task; the HotpotQA image runs a pinned revision of its official evaluator. Reference material is mounted only into the grader container. Preparing the dataset again replaces the manifest, so finish preparation before creating a campaign.
 
 ## Safety and recovery
 
