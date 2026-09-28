@@ -6,11 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from actionbench.agent import AgentRunner
-from actionbench.commands import _development_episode, _validate_on_development
+from actionbench.commands import _development_episode, _read_saved_answer, _validate_on_development, _verified_package
 from actionbench.cli import campaign_lock
 from actionbench.config import load_config
 from actionbench.broker import Broker
-from actionbench.errors import ActionBenchError, UnknownProviderOutcome
+from actionbench.errors import ActionBenchError, InfrastructureError, UnknownProviderOutcome
 from actionbench.grader import grade
 from actionbench.report import build_report
 from actionbench.runner import ActionRunner
@@ -211,6 +211,24 @@ class CoreTests(unittest.TestCase):
                 result = _validate_on_development(config, store, "f", 0, 0, [SimpleNamespace(id="d", public_input=public, family="f")], Agent(), "skill", root)
             self.assertEqual(result[0]["primary"], 1)
             self.assertEqual(grader.call_args.args[1], "checkpointed answer")
+
+    def test_answer_checkpoint_detects_tampering(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); config, store = self.make(root)
+            store.create_episode("e", config.campaign, "task", "f", "plain", 0)
+            answer = root / "answer.txt"; answer.write_text("original")
+            store.save_answer("e", str(answer)); answer.write_text("changed")
+            with self.assertRaises(InfrastructureError): _read_saved_answer(store.episode("e"), answer)
+
+    def test_package_hash_detects_tampering(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); package = root / "package"; package.mkdir()
+            skill = package / "SKILL.md"; skill.write_text("original")
+            from actionbench.skill_creator import _package_hash
+            row = {"path": str(package), "package_hash": _package_hash(package)}
+            self.assertEqual(_verified_package(row), package)
+            skill.write_text("changed")
+            with self.assertRaises(InfrastructureError): _verified_package(row)
 
     def test_pending_work_is_not_counted_as_a_zero_quality_result(self):
         with tempfile.TemporaryDirectory() as d:

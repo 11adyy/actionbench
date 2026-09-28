@@ -10,8 +10,9 @@ from .statistics import crossed_paired_bootstrap
 
 def build_report(config, store) -> dict:
     rows = store.conn.execute("""SELECT e.task_id,e.family,e.condition,e.replica,e.status,e.retryable,e.error,e.duration_seconds,ev.score_json,
-                              COALESCE(SUM(COALESCE(r.actual_usd,r.reserved_usd)),0) cost,COUNT(r.request_id) model_calls,
-                              SUM(CASE WHEN r.state!='completed' THEN 1 ELSE 0 END) uncertain_requests
+                              COALESCE(SUM(CASE WHEN r.state='rejected' THEN 0 ELSE COALESCE(r.actual_usd,r.reserved_usd) END),0) cost,
+                              SUM(CASE WHEN r.state='completed' THEN 1 ELSE 0 END) model_calls,
+                              SUM(CASE WHEN r.state IN ('reserved','submitted','unknown_outcome') THEN 1 ELSE 0 END) uncertain_requests
                               FROM episodes e LEFT JOIN evaluations ev ON ev.episode_id=e.episode_id
                               LEFT JOIN requests r ON r.episode_id=e.episode_id WHERE e.campaign=? GROUP BY e.episode_id""", (config.campaign,)).fetchall()
     groups = defaultdict(lambda: {"planned": 0, "completed": 0, "execution_failed": 0, "pending": 0, "blocked": 0, "scored": [], "costs": [], "terminal_costs": [], "terminal_seconds": [], "terminal_calls": [], "uncertain_requests": 0})

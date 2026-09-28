@@ -15,7 +15,7 @@ from .errors import ActionBenchError, CampaignBudgetExceeded, InfrastructureErro
 from .grader import grade
 from .manifest import Manifest, load_manifest, verify_data
 from .runner import ActionRunner
-from .skill_creator import create_package
+from .skill_creator import create_package, _package_hash
 
 
 def dispatch(args, config, store) -> int:
@@ -135,6 +135,22 @@ def _id(*parts: object) -> str:
     return hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()[:32]
 
 
+def _read_saved_answer(row, expected_path: Path) -> str:
+    if Path(row["final_artifact"]).resolve() != expected_path.resolve() or not expected_path.is_file():
+        raise InfrastructureError(f"Saved answer path missing or changed: {expected_path}")
+    digest = hashlib.sha256(expected_path.read_bytes()).hexdigest()
+    if not row["final_artifact_sha256"] or digest != row["final_artifact_sha256"]:
+        raise InfrastructureError(f"Saved answer hash mismatch: {expected_path}")
+    return expected_path.read_text()
+
+
+def _verified_package(row) -> Path:
+    path = Path(row["path"])
+    if not path.is_dir() or _package_hash(path) != row["package_hash"]:
+        raise InfrastructureError(f"Package changed after creation: {path}")
+    return path
+
+
 def _creation_episode(config, family: str, replica: int, kind: str) -> str:
     return _id(config.campaign, "creation", family, replica, kind)
 
@@ -147,7 +163,10 @@ def _create_packages(config, store, manifest: Manifest) -> None:
         dev_tasks = [task for task in family.tasks if task.split == "development"]
         for replica in range(config.replicas):
             for kind in ("skill", "skill_script", "action"):
-                if store.package(config.campaign, family.id, replica, kind): continue
+                previous = store.package(config.campaign, family.id, replica, kind)
+                if previous:
+                    _verified_package(previous)
+                    continue
                 episode = _creation_episode(config, family.id, replica, kind)
                 store.create_episode(episode, config.campaign, f"creation:{family.id}:{kind}:{replica}", family.id, kind, replica)
                 prior = store.episode(episode)
@@ -163,7 +182,7 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                     if kind in {"skill_script", "action"}:
                         paired = store.package(config.campaign, family.id, replica, "skill")
                         if not paired: raise ActionBenchError("Create the paired conventional skill before its action package")
-                        base_skill_md = (Path(paired["path"]) / "SKILL.md").read_text()
+                        base_skill_md = (_verified_package(paired) / "SKILL.md").read_text()
                     for revision in range(3):
                         target = base / family.id / str(replica) / kind / f"v{revision}"
                         try:
@@ -213,8 +232,7 @@ def _validate_on_development(config, store, family: str, replica: int, revision:
         try:
             answer_path = config.artifact_root / "answers" / config.campaign / f"{episode}.txt"
             if existing["final_artifact"]:
-                if not answer_path.is_file(): raise InfrastructureError(f"Saved development answer missing: {answer_path}")
-                answer = answer_path.read_text()
+                answer = _read_saved_answer(existing, answer_path)
             else:
                 answer = agent.run(episode, task.public_input.read_text(), kind, package if kind in {"skill", "skill_script"} else None, package if kind == "action" else None)
                 answer_path.parent.mkdir(parents=True, exist_ok=True)
@@ -251,6 +269,7 @@ def _plan_test_episodes(config, store, manifest: Manifest) -> None:
             scripts = store.package(config.campaign, task.family, replica, "skill_script")
             actions = store.package(config.campaign, task.family, replica, "action")
             if not conventional or not scripts or not actions: raise ActionBenchError(f"Missing packages for {task.family} replica {replica}; run create-skills")
+            for package in (conventional, scripts, actions): _verified_package(package)
             packages = {"plain": None, "skill": conventional["package_hash"], "skill_script": scripts["package_hash"], "improvised": conventional["package_hash"], "action": actions["package_hash"]}
             for condition in config.conditions:
                 episode_id = _id(config.campaign, "test", task.id, condition, replica, packages[condition] or "plain")
@@ -267,16 +286,15 @@ def _execute(config, store, manifest: Manifest) -> None:
         conventional = store.package(config.campaign, task.family, row["replica"], "skill")
         scripts = store.package(config.campaign, task.family, row["replica"], "skill_script")
         actions = store.package(config.campaign, task.family, row["replica"], "action")
-        skill_dir = Path(conventional["path"]) if row["condition"] in {"skill", "improvised"} else (Path(scripts["path"]) if row["condition"] == "skill_script" else None)
-        action_dir = Path(actions["path"]) if row["condition"] == "action" else None
+        skill_dir = _verified_package(conventional) if row["condition"] in {"skill", "improvised"} else (_verified_package(scripts) if row["condition"] == "skill_script" else None)
+        action_dir = _verified_package(actions) if row["condition"] == "action" else None
         store.set_episode(row["episode_id"], "running")
         started = time.monotonic()
         try:
             output_dir = config.artifact_root / "answers" / config.campaign; output_dir.mkdir(parents=True, exist_ok=True)
             answer_path = output_dir / f"{row['episode_id']}.txt"
             if row["final_artifact"]:
-                if not answer_path.is_file(): raise InfrastructureError(f"Saved answer missing: {answer_path}")
-                answer = answer_path.read_text()
+                answer = _read_saved_answer(row, answer_path)
             else:
                 answer = agent.run(row["episode_id"], task.public_input.read_text(), row["condition"], skill_dir, action_dir)
                 answer_path.write_text(answer); store.save_answer(row["episode_id"], str(answer_path))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -60,7 +61,7 @@ class Store:
           task_id TEXT NOT NULL, family TEXT NOT NULL, condition TEXT NOT NULL, replica INTEGER NOT NULL,
           package_hash TEXT, status TEXT NOT NULL, retryable INTEGER NOT NULL DEFAULT 1, attempts INTEGER NOT NULL DEFAULT 0,
           duration_seconds REAL NOT NULL DEFAULT 0,
-          final_artifact TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          final_artifact TEXT, final_artifact_sha256 TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           UNIQUE(campaign,task_id,condition,replica,package_hash)
         );
         CREATE TABLE IF NOT EXISTS requests (
@@ -100,6 +101,7 @@ class Store:
             "ALTER TABLE episodes ADD COLUMN retryable INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE episodes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE episodes ADD COLUMN duration_seconds REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE episodes ADD COLUMN final_artifact_sha256 TEXT",
             "ALTER TABLE requests ADD COLUMN request_key TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE requests ADD COLUMN request_hash TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE requests ADD COLUMN reserved_input_tokens INTEGER NOT NULL DEFAULT 0",
@@ -167,7 +169,8 @@ class Store:
         self.conn.execute("UPDATE episodes SET status=?,retryable=?,final_artifact=COALESCE(?,final_artifact),error=?,updated_at=? WHERE episode_id=?", (status, int(retryable), final_artifact, error, now(), episode_id))
 
     def save_answer(self, episode_id: str, path: str) -> None:
-        self.conn.execute("UPDATE episodes SET final_artifact=?,updated_at=? WHERE episode_id=?", (path, now(), episode_id))
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        self.conn.execute("UPDATE episodes SET final_artifact=?,final_artifact_sha256=?,updated_at=? WHERE episode_id=?", (path, digest, now(), episode_id))
 
     def add_episode_duration(self, episode_id: str, seconds: float) -> None:
         self.conn.execute("UPDATE episodes SET duration_seconds=duration_seconds+? WHERE episode_id=?", (max(0, seconds), episode_id))
