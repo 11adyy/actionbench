@@ -15,6 +15,8 @@ cp config.example.json experiment.json
 actionbench doctor --config experiment.json
 actionbench images build --config experiment.json
 actionbench datasets prepare --config experiment.json --out manifests/study.json
+actionbench datasets prepare --config experiment.json --manifest manifests/study.json
+actionbench smoke --config experiment.json --manifest manifests/study.json
 actionbench live-check --config experiment.json
 ```
 
@@ -28,9 +30,10 @@ actionbench run --config experiment.json --manifest manifests/study.json
 actionbench status --config experiment.json
 actionbench resume --config experiment.json --manifest manifests/study.json
 actionbench report --config experiment.json --out artifacts/report.json
+actionbench freeze --config experiment.json
 ```
 
-Every campaign has an immutable configuration hash. A changed configuration requires a new campaign name. The current ledger is `actionbench-v3.sqlite3`; it intentionally does not reuse earlier ledgers produced under a different experimental design. Completed evaluations are never rerun by `resume`.
+Every campaign has an immutable configuration hash and, once started, a bound manifest, harness source hash, and image digests. A changed input requires a new campaign name. The current ledger is `actionbench-v3.sqlite3`; it intentionally does not reuse earlier ledgers produced under a different experimental design. Completed evaluations are never rerun by `resume`. To raise a depleted dollar ceiling without changing the fixed experiment configuration, run `actionbench budget --config experiment.json --usd NEW_TOTAL`. This appends an auditable budget update.
 
 ## Conditions
 
@@ -46,4 +49,6 @@ This gives three direct comparisons: `action - skill` tests the full proposal; `
 
 Generated code runs with no network, credentials, or Docker socket, under resource limits and in a persistent per-step workspace. The broker alone owns API credentials. A completed request can be reused only when its complete payload hash matches; a changed prompt produces a new request. Unknown provider outcomes are never retried automatically. Package writes use an atomic staging directory; each development evaluation has its own durable episode and budget, so a stopped creation run can resume without silently reusing a shared budget.
 
-The report keeps terminal execution failures as zero, keeps in-progress work out of quality estimates, resamples benchmark tasks and generated package replicas as separate sources of uncertainty, and reports package-creation cost together with a break-even reuse estimate. A transient infrastructure failure can retry once; protocol, budget, and model-output failures are terminal and remain visible in the result.
+The report keeps terminal agent execution failures as zero, keeps in-progress and infrastructure-interrupted work out of quality estimates, resamples benchmark tasks and generated package replicas as separate sources of uncertainty, and reports package-creation cost together with a break-even reuse estimate. Infrastructure interruptions remain resumable; protocol and model-output failures are terminal. A global campaign budget exhaustion leaves episodes queued until the audited ceiling is raised. Submitted provider calls with unknown outcomes are blocked for manual audit, because automatic retry could duplicate a paid request. Only a real Docker `smoke` and provider campaign can support the paper's empirical claim; the local Python tests alone cannot.
+
+The scientific design, analyses, reporting requirements, and paper outline are in [PROTOCOL.md](PROTOCOL.md).
