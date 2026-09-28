@@ -67,8 +67,8 @@ def dispatch(args, config, store) -> int:
     if args.command == "images":
         if not shutil.which("docker"): raise ActionBenchError("Docker is required to build benchmark grader images")
         root = Path(__file__).parents[1] / "graders"
-        for name in ("mbppplus", "hotpotqa"):
-            subprocess.run(["docker", "build", "-t", f"actionbench-{name}:v1", str(root / name)], check=True)
+        for name, image in (("mbppplus", "actionbench-mbppplus:v1"), ("hotpotqa", "actionbench-hotpot:v1")):
+            subprocess.run(["docker", "build", "-t", image, str(root / name)], check=True)
         print(json.dumps({"built": ["actionbench-mbppplus:v1", "actionbench-hotpot:v1"]}, indent=2)); return 0
     if args.command == "datasets" and not args.manifest:
         from .datasets import prepare_study
