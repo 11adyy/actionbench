@@ -9,12 +9,13 @@ from actionbench.agent import AgentRunner
 from actionbench.commands import _validate_on_development
 from actionbench.config import load_config
 from actionbench.broker import Broker
-from actionbench.errors import UnknownProviderOutcome
+from actionbench.errors import ActionBenchError, UnknownProviderOutcome
+from actionbench.grader import grade
 from actionbench.report import build_report
 from actionbench.runner import ActionRunner
 from actionbench.skill_creator import create_package
 from actionbench.store import Store
-from actionbench.statistics import clustered_paired_bootstrap
+from actionbench.statistics import crossed_paired_bootstrap
 
 
 class CoreTests(unittest.TestCase):
@@ -107,6 +108,18 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(broker.context["procedures"][0]["input_schema"]["required"], ["text"])
             self.assertIn("procedure", broker.context["tools"])
 
+    def test_multiple_procedures_are_sorted_and_exposed(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); (root / "SKILL.md").write_text("skill")
+            for procedure_id in ("zeta", "alpha"):
+                directory = root / "procedures" / procedure_id; directory.mkdir(parents=True)
+                (directory / "procedure.json").write_text(json.dumps({"id": procedure_id, "description": procedure_id, "input_schema": {"type": "object"}, "command": ["python", "/action/main.py"]}))
+            class BrokerCapture:
+                config = SimpleNamespace(budget=SimpleNamespace(max_llm_calls=1, max_output_tokens=64))
+                def call(self, *_args): self.context = json.loads(_args[3]); return SimpleNamespace(text='{"type":"final","answer":"ok"}')
+            broker = BrokerCapture(); AgentRunner(broker, None).run("e", "task", "action", None, root)
+            self.assertEqual([item["id"] for item in broker.context["procedures"]], ["alpha", "zeta"])
+
     def test_plain_code_runs_at_its_mounted_workspace_path(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
@@ -137,11 +150,15 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(creator.calls, 1)
 
-    def test_clustered_bootstrap_counts_tasks_not_replicas_as_independent(self):
-        result = clustered_paired_bootstrap({"task-a": [(1, 0), (1, 0)], "task-b": [(0, 1), (0, 1)]}, 7, samples=100)
-        self.assertEqual(result["n_tasks"], 2)
-        self.assertEqual(result["n_cells"], 4)
+    def test_crossed_bootstrap_preserves_package_replica_variance(self):
+        cells = {(f"task-{task}", replica): ((1, 0) if replica == 0 else (0, 1)) for task in range(20) for replica in range(2)}
+        result = crossed_paired_bootstrap(cells, 7, samples=500)
+        self.assertEqual(result["n_tasks"], 20)
+        self.assertEqual(result["n_replicas"], 2)
+        self.assertEqual(result["n_cells"], 40)
         self.assertEqual(result["mean_delta"], 0)
+        self.assertLess(result["ci95"][0], 0)
+        self.assertGreater(result["ci95"][1], 0)
 
     def test_development_cases_have_separate_resumable_episodes(self):
         with tempfile.TemporaryDirectory() as d:
@@ -169,6 +186,62 @@ class CoreTests(unittest.TestCase):
             report = build_report(config, store)
             self.assertEqual(report["groups"]["f:action"]["primary_on_terminal_episodes"], 1)
             self.assertIsNone(report["groups"]["f:skill"]["primary_on_terminal_episodes"])
+
+    def test_retryable_infrastructure_failure_becomes_terminal_after_two_attempts(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "task", "f", "action", 0)
+            store.set_episode("e", "running"); store.set_episode("e", "failed", error="temporary", retryable=True)
+            self.assertTrue(store.episode("e")["retryable"])
+            store.set_episode("e", "running"); store.set_episode("e", "failed", error="temporary", retryable=True)
+            self.assertFalse(store.episode("e")["retryable"])
+            self.assertEqual(store.resumable_episodes(config.campaign), [])
+
+    def test_stalled_running_episode_becomes_a_terminal_failure_after_two_attempts(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "task", "f", "action", 0)
+            store.set_episode("e", "running"); store.set_episode("e", "running")
+            self.assertEqual(store.resumable_episodes(config.campaign), [])
+            row = store.episode("e")
+            self.assertEqual(row["status"], "failed")
+            self.assertFalse(row["retryable"])
+
+    def test_protocol_failure_in_development_is_terminal(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); config, store = self.make(root); source = root / "task.json"; source.write_text("task")
+            class BrokenAgent:
+                def run(self, *_args): raise ActionBenchError("invalid tool request")
+            with self.assertRaises(ActionBenchError):
+                _validate_on_development(config, store, "f", 0, 0, [SimpleNamespace(id="d", public_input=source, family="f")], BrokenAgent(), "skill", root)
+            episode = store.resumable_episodes(config.campaign)
+            self.assertEqual(episode, [])
+
+    def test_grader_has_a_writable_temporary_filesystem(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); public = root / "task.json"; public.write_text("{}")
+            reference = root / "reference"; reference.mkdir()
+            task = SimpleNamespace(public_input=public, reference_dir=reference, grader={"image": "grader:test", "command": ["grade"]})
+            observed = {}
+            def fake_run(command, **_kwargs): observed["command"] = command; return SimpleNamespace(returncode=0, stdout='{"primary": 1}', stderr="")
+            with patch("actionbench.grader.shutil.which", return_value="docker"), patch("actionbench.grader.subprocess.run", side_effect=fake_run):
+                self.assertEqual(grade(task, "answer")["primary"], 1)
+            self.assertIn("/tmp:rw,nosuid,size=256m", observed["command"])
+
+    def test_action_amortization_does_not_subtract_the_shared_skill_cost(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            def add_cost(episode, task_id, condition, amount):
+                store.create_episode(episode, config.campaign, task_id, "f", condition, 0)
+                store.set_episode(episode, "completed", retryable=False)
+                store.reserve_request(f"request-{episode}", episode, "k", "h", {}, amount, 1)
+                store.mark_submitted(f"request-{episode}")
+                store.complete_request(f"request-{episode}", None, {}, {}, amount)
+            add_cost("create-skill", "creation:f:skill:0", "skill", 5)
+            add_cost("create-action", "creation:f:action:0", "action", 7)
+            for condition in ("skill", "action"):
+                add_cost(f"test-{condition}", "task", condition, 0)
+                store.save_evaluation(f"test-{condition}", "f", {"primary": 1})
+            comparison = build_report(config, store)["paired_comparisons"]["f:action_minus_skill"]
+            self.assertEqual(comparison["amortization"]["mean_creation_delta_usd_per_replica"], 7)
 
 
 if __name__ == "__main__": unittest.main()

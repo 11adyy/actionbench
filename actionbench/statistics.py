@@ -10,20 +10,31 @@ def paired_bootstrap(rows: list[tuple[float, float]], seed: int, samples: int = 
     deltas = [left - right for left, right in rows]
     rng = random.Random(seed)
     bootstrap = sorted(mean(deltas[rng.randrange(len(deltas))] for _ in deltas) for _ in range(samples))
-    lower = bootstrap[int(.025 * (samples - 1))]; upper = bootstrap[int(.975 * (samples - 1))]
+    lower = bootstrap[int(.025 * (len(bootstrap) - 1))]; upper = bootstrap[int(.975 * (len(bootstrap) - 1))]
     return {"n": len(deltas), "mean_delta": mean(deltas), "ci95": [lower, upper]}
 
 
-def clustered_paired_bootstrap(clusters: dict[str, list[tuple[float, float]]], seed: int, samples: int = 10_000) -> dict:
-    """Resample tasks, averaging replica-level pairs within each task first.
+def crossed_paired_bootstrap(cells: dict[tuple[str, int], tuple[float, float]], seed: int, samples: int = 10_000) -> dict:
+    """Resample tasks and generated packages independently in a crossed study.
 
-    Packages vary by replica, but the benchmark task is shared across replicas.
-    Treating all task/replica cells as independent would make the interval too narrow.
+    A package replica is reused across tasks, while a task is scored by every
+    package replica. Resampling only tasks erases package-generation variance;
+    treating every cell as independent erases both dependencies.
     """
-    task_deltas = [mean(left - right for left, right in cells) for cells in clusters.values() if cells]
-    n_cells = sum(len(cells) for cells in clusters.values())
-    if not task_deltas: return {"n": 0, "n_tasks": 0, "n_cells": 0, "mean_delta": None, "ci95": None}
+    task_ids = sorted({task for task, _ in cells})
+    replicas = sorted({replica for _, replica in cells})
+    if not task_ids or not replicas: return {"n": 0, "n_tasks": 0, "n_replicas": 0, "n_cells": 0, "mean_delta": None, "ci95": None}
+    deltas = {key: left - right for key, (left, right) in cells.items()}
+    observed = list(deltas.values())
     rng = random.Random(seed)
-    bootstrap = sorted(mean(task_deltas[rng.randrange(len(task_deltas))] for _ in task_deltas) for _ in range(samples))
-    lower = bootstrap[int(.025 * (samples - 1))]; upper = bootstrap[int(.975 * (samples - 1))]
-    return {"n": len(task_deltas), "n_tasks": len(task_deltas), "n_cells": n_cells, "mean_delta": mean(task_deltas), "ci95": [lower, upper]}
+    bootstrap = []
+    for _ in range(samples):
+        sampled_tasks = [task_ids[rng.randrange(len(task_ids))] for _ in task_ids]
+        sampled_replicas = [replicas[rng.randrange(len(replicas))] for _ in replicas]
+        drawn = [deltas[(task, replica)] for task in sampled_tasks for replica in sampled_replicas if (task, replica) in deltas]
+        if drawn: bootstrap.append(mean(drawn))
+    if not bootstrap:
+        return {"n": len(task_ids), "n_tasks": len(task_ids), "n_replicas": len(replicas), "n_cells": len(observed), "mean_delta": mean(observed), "ci95": None}
+    bootstrap.sort()
+    lower = bootstrap[int(.025 * (len(bootstrap) - 1))]; upper = bootstrap[int(.975 * (len(bootstrap) - 1))]
+    return {"n": len(task_ids), "n_tasks": len(task_ids), "n_replicas": len(replicas), "n_cells": len(observed), "mean_delta": mean(observed), "ci95": [lower, upper]}

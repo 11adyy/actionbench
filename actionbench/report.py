@@ -5,7 +5,7 @@ import hashlib
 import math
 from collections import defaultdict
 
-from .statistics import clustered_paired_bootstrap
+from .statistics import crossed_paired_bootstrap
 
 
 def build_report(config, store) -> dict:
@@ -55,19 +55,20 @@ def build_report(config, store) -> dict:
             other = by_cell.get((family, task_id, replica, baseline))
             if not other or not action["terminal"] or not other["terminal"]:
                 excluded[family] += 1; continue
-            grouped[family][task_id].append(((action["score"], action["cost"]), (other["score"], other["cost"])))
+            grouped[family][task_id].append((replica, ((action["score"], action["cost"]), (other["score"], other["cost"]))))
             replicas[family].add(replica)
         for family, tasks in grouped.items():
             salt = int(hashlib.sha256(f"{config.campaign}|{family}|{baseline}".encode()).hexdigest()[:8], 16)
-            quality_clusters = {task: [(a[0], b[0]) for a, b in pairs] for task, pairs in tasks.items()}
-            cost_clusters = {task: [(a[1], b[1]) for a, b in pairs] for task, pairs in tasks.items()}
-            mean_runtime_delta = sum(a[1] - b[1] for pairs in tasks.values() for a, b in pairs) / sum(len(pairs) for pairs in tasks.values())
-            per_replica_creation = [creation_costs[(family, "action", replica)] - creation_costs[(family, baseline if baseline != "improvised" else "skill", replica)] for replica in replicas[family]]
+            quality_cells = {(task, replica): (action[0], other[0]) for task, pairs in tasks.items() for replica, (action, other) in pairs}
+            cost_cells = {(task, replica): (action[1], other[1]) for task, pairs in tasks.items() for replica, (action, other) in pairs}
+            mean_runtime_delta = sum(action[1] - other[1] for pairs in tasks.values() for _, (action, other) in pairs) / sum(len(pairs) for pairs in tasks.values())
+            baseline_creation = "skill_script" if baseline == "skill_script" else None
+            per_replica_creation = [creation_costs[(family, "action", replica)] - (creation_costs[(family, baseline_creation, replica)] if baseline_creation else 0.0) for replica in replicas[family]]
             mean_creation_delta = sum(per_replica_creation) / len(per_replica_creation) if per_replica_creation else 0.0
             break_even = None if mean_runtime_delta >= 0 else max(0, int(math.ceil(mean_creation_delta / -mean_runtime_delta)))
             comparisons[f"{family}:action_minus_{baseline}"] = {
-                "quality": clustered_paired_bootstrap(quality_clusters, salt),
-                "usd": clustered_paired_bootstrap(cost_clusters, salt + 1),
+                "quality": crossed_paired_bootstrap(quality_cells, salt),
+                "usd": crossed_paired_bootstrap(cost_cells, salt + 1),
                 "incomplete_pairs_excluded": excluded[family],
                 "amortization": {"mean_creation_delta_usd_per_replica": mean_creation_delta, "mean_runtime_delta_usd_per_episode": mean_runtime_delta, "break_even_uses_per_package": break_even},
             }

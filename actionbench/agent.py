@@ -21,8 +21,8 @@ class AgentRunner:
         catalog = []
         if package_dir:
             catalog = sorted(
-                json.loads(item.read_text())
-                for item in package_dir.glob("procedures/*/procedure.json")
+                (json.loads(item.read_text()) for item in package_dir.glob("procedures/*/procedure.json")),
+                key=lambda procedure: procedure["id"],
             )
         enabled = ["code"]
         if condition == "improvised": enabled.append("llm_code")

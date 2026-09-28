@@ -102,6 +102,8 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                     store.set_episode(episode, "completed")
                 except UnknownProviderOutcome as exc:
                     store.set_episode(episode, "failed", error=str(exc), retryable=False); raise
+                except ActionBenchError as exc:
+                    store.set_episode(episode, "failed", error=str(exc), retryable=False); raise
                 except Exception as exc:
                     store.set_episode(episode, "failed", error=str(exc), retryable=True); raise
 
@@ -131,6 +133,9 @@ def _validate_on_development(config, store, family: str, replica: int, revision:
             store.save_evaluation(episode, task.family, score)
             store.set_episode(episode, "completed", retryable=False)
         except UnknownProviderOutcome as exc:
+            store.set_episode(episode, "failed", error=str(exc), retryable=False)
+            raise
+        except ActionBenchError as exc:
             store.set_episode(episode, "failed", error=str(exc), retryable=False)
             raise
         except Exception as exc:
@@ -172,6 +177,8 @@ def _execute(config, store, manifest: Manifest) -> None:
             store.save_evaluation(row["episode_id"], task.family, score)
             store.set_episode(row["episode_id"], "completed", final_artifact=str(answer_path), retryable=False)
         except UnknownProviderOutcome as exc:
+            store.set_episode(row["episode_id"], "failed", error=str(exc), retryable=False)
+        except ActionBenchError as exc:
             store.set_episode(row["episode_id"], "failed", error=str(exc), retryable=False)
         except Exception as exc:
             store.set_episode(row["episode_id"], "failed", error=str(exc), retryable=True)

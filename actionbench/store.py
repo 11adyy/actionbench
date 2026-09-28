@@ -49,7 +49,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS episodes (
           episode_id TEXT PRIMARY KEY, campaign TEXT NOT NULL REFERENCES campaigns(campaign),
           task_id TEXT NOT NULL, family TEXT NOT NULL, condition TEXT NOT NULL, replica INTEGER NOT NULL,
-          package_hash TEXT, status TEXT NOT NULL, retryable INTEGER NOT NULL DEFAULT 1,
+          package_hash TEXT, status TEXT NOT NULL, retryable INTEGER NOT NULL DEFAULT 1, attempts INTEGER NOT NULL DEFAULT 0,
           final_artifact TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           UNIQUE(campaign,task_id,condition,replica,package_hash)
         );
@@ -88,6 +88,7 @@ class Store:
         for statement in (
             "ALTER TABLE episodes ADD COLUMN package_hash TEXT",
             "ALTER TABLE episodes ADD COLUMN retryable INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE episodes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE requests ADD COLUMN request_key TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE requests ADD COLUMN request_hash TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE requests ADD COLUMN reserved_input_tokens INTEGER NOT NULL DEFAULT 0",
@@ -125,10 +126,18 @@ class Store:
         return self.conn.execute("SELECT * FROM episodes WHERE episode_id=?", (episode_id,)).fetchone()
 
     def set_episode(self, episode_id: str, status: str, *, final_artifact: str | None = None, error: str | None = None, retryable: bool = True) -> None:
+        if status == "running":
+            self.conn.execute("UPDATE episodes SET status=?,attempts=attempts+1,error=?,updated_at=? WHERE episode_id=?", (status, error, now(), episode_id))
+            return
+        if status == "failed" and retryable:
+            row = self.episode(episode_id)
+            retryable = bool(row and row["attempts"] < 2)
         self.conn.execute("UPDATE episodes SET status=?,retryable=?,final_artifact=COALESCE(?,final_artifact),error=?,updated_at=? WHERE episode_id=?", (status, int(retryable), final_artifact, error, now(), episode_id))
 
     def resumable_episodes(self, campaign: str):
-        return self.conn.execute("SELECT * FROM episodes WHERE campaign=? AND (status IN ('queued','running') OR (status='failed' AND retryable=1)) ORDER BY task_id,condition,replica", (campaign,)).fetchall()
+        self.conn.execute("""UPDATE episodes SET status='failed',retryable=0,error=COALESCE(error,'Interrupted twice before completion'),updated_at=?
+                           WHERE campaign=? AND status='running' AND attempts>=2""", (now(), campaign))
+        return self.conn.execute("SELECT * FROM episodes WHERE campaign=? AND (status='queued' OR (status='running' AND attempts<2) OR (status='failed' AND retryable=1 AND attempts<2)) ORDER BY task_id,condition,replica", (campaign,)).fetchall()
 
     def save_package(self, campaign: str, family: str, replica: int, condition: str, package_hash: str, path: str, creation_episode_id: str) -> None:
         self.conn.execute("INSERT INTO generated_packages VALUES(?,?,?,?,?,?,?,?)", (campaign, family, replica, condition, package_hash, path, creation_episode_id, now()))
