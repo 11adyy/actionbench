@@ -51,7 +51,9 @@ class Config:
 
     @property
     def db_path(self) -> Path:
-        return self.artifact_root / "actionbench.sqlite3"
+        # The original prototype used incompatible request identities. A separate
+        # ledger avoids corrupting an in-progress v1 result during the upgrade.
+        return self.artifact_root / "actionbench-v2.sqlite3"
 
 
 def _required(mapping: dict, key: str):

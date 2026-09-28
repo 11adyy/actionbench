@@ -1,0 +1,706 @@
+{
+  "name": "actionbench-study-v1",
+  "dataset_lock": {
+    "mbpp_sanitized": {
+      "url": "https://github.com/google-research/google-research/raw/master/mbpp/sanitized-mbpp.json",
+      "sha256": "ca95deaa9a01ef0a6f439f88bcf0dd3db3563d22f22aad6cae04ebb9a8d8c8e9"
+    },
+    "hotpot_dev_distractor": {
+      "url": "https://huggingface.co/datasets/namlh2004/hotpotqa/resolve/main/hotpot_dev_distractor_v1.json?download=true",
+      "sha256": "e3da074df24e8369009918aa5cdbdd254dadcde4c63f7569d36afd6f2268caa8"
+    },
+    "seed": 20260928
+  },
+  "families": [
+    {
+      "id": "mbppplus",
+      "creator_brief": "Solve unseen Python programming problems. Produce only a valid implementation matching the requested function contract. Use the code tool for local reasoning and test construction.",
+      "demonstrations": [],
+      "tasks": [
+        {
+          "id": "mbppplus-000",
+          "split": "development",
+          "public_input": "public/mbppplus/mbppplus-000.json",
+          "reference_dir": "private/mbppplus/mbppplus-000",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-001",
+          "split": "development",
+          "public_input": "public/mbppplus/mbppplus-001.json",
+          "reference_dir": "private/mbppplus/mbppplus-001",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-002",
+          "split": "development",
+          "public_input": "public/mbppplus/mbppplus-002.json",
+          "reference_dir": "private/mbppplus/mbppplus-002",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-003",
+          "split": "development",
+          "public_input": "public/mbppplus/mbppplus-003.json",
+          "reference_dir": "private/mbppplus/mbppplus-003",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-004",
+          "split": "development",
+          "public_input": "public/mbppplus/mbppplus-004.json",
+          "reference_dir": "private/mbppplus/mbppplus-004",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-005",
+          "split": "development",
+          "public_input": "public/mbppplus/mbppplus-005.json",
+          "reference_dir": "private/mbppplus/mbppplus-005",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-006",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-006.json",
+          "reference_dir": "private/mbppplus/mbppplus-006",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-007",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-007.json",
+          "reference_dir": "private/mbppplus/mbppplus-007",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-008",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-008.json",
+          "reference_dir": "private/mbppplus/mbppplus-008",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-009",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-009.json",
+          "reference_dir": "private/mbppplus/mbppplus-009",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-010",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-010.json",
+          "reference_dir": "private/mbppplus/mbppplus-010",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-011",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-011.json",
+          "reference_dir": "private/mbppplus/mbppplus-011",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-012",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-012.json",
+          "reference_dir": "private/mbppplus/mbppplus-012",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-013",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-013.json",
+          "reference_dir": "private/mbppplus/mbppplus-013",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-014",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-014.json",
+          "reference_dir": "private/mbppplus/mbppplus-014",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-015",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-015.json",
+          "reference_dir": "private/mbppplus/mbppplus-015",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-016",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-016.json",
+          "reference_dir": "private/mbppplus/mbppplus-016",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-017",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-017.json",
+          "reference_dir": "private/mbppplus/mbppplus-017",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-018",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-018.json",
+          "reference_dir": "private/mbppplus/mbppplus-018",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-019",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-019.json",
+          "reference_dir": "private/mbppplus/mbppplus-019",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-020",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-020.json",
+          "reference_dir": "private/mbppplus/mbppplus-020",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-021",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-021.json",
+          "reference_dir": "private/mbppplus/mbppplus-021",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-022",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-022.json",
+          "reference_dir": "private/mbppplus/mbppplus-022",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-023",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-023.json",
+          "reference_dir": "private/mbppplus/mbppplus-023",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-024",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-024.json",
+          "reference_dir": "private/mbppplus/mbppplus-024",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "mbppplus-025",
+          "split": "test",
+          "public_input": "public/mbppplus/mbppplus-025.json",
+          "reference_dir": "private/mbppplus/mbppplus-025",
+          "grader": {
+            "image": "actionbench-mbppplus:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "hotpotqa",
+      "creator_brief": "Answer unseen multi-hop questions from the supplied passages. Produce the answer plus exact supporting-fact title and sentence-index pairs in the required JSON contract.",
+      "demonstrations": [],
+      "tasks": [
+        {
+          "id": "hotpotqa-000",
+          "split": "development",
+          "public_input": "public/hotpotqa/hotpotqa-000.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-000",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-001",
+          "split": "development",
+          "public_input": "public/hotpotqa/hotpotqa-001.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-001",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-002",
+          "split": "development",
+          "public_input": "public/hotpotqa/hotpotqa-002.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-002",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-003",
+          "split": "development",
+          "public_input": "public/hotpotqa/hotpotqa-003.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-003",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-004",
+          "split": "development",
+          "public_input": "public/hotpotqa/hotpotqa-004.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-004",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-005",
+          "split": "development",
+          "public_input": "public/hotpotqa/hotpotqa-005.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-005",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-006",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-006.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-006",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-007",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-007.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-007",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-008",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-008.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-008",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-009",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-009.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-009",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-010",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-010.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-010",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-011",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-011.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-011",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-012",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-012.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-012",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-013",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-013.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-013",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-014",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-014.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-014",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-015",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-015.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-015",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-016",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-016.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-016",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-017",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-017.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-017",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-018",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-018.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-018",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-019",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-019.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-019",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-020",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-020.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-020",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-021",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-021.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-021",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-022",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-022.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-022",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-023",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-023.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-023",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-024",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-024.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-024",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        },
+        {
+          "id": "hotpotqa-025",
+          "split": "test",
+          "public_input": "public/hotpotqa/hotpotqa-025.json",
+          "reference_dir": "private/hotpotqa/hotpotqa-025",
+          "grader": {
+            "image": "actionbench-hotpot:v1",
+            "command": [
+              "python",
+              "/grader/grade.py"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -36,13 +36,20 @@ def _download(urls: str | tuple[str, ...], destination: Path, expected_sha256: s
                 digest = hashlib.sha256(payload).hexdigest()
                 if expected_sha256 and digest != expected_sha256: raise ActionBenchError(f"Source checksum mismatch for {url}: {digest}")
                 destination.write_bytes(payload)
+                destination.with_suffix(destination.suffix + ".source.json").write_text(json.dumps({"url": url, "sha256": digest}))
                 return url, digest
             except OSError as exc:
                 failures.append(f"{url}: {exc}")
         raise ActionBenchError("Could not download benchmark data:\n" + "\n".join(failures))
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     if expected_sha256 and digest != expected_sha256: raise ActionBenchError(f"Existing dataset checksum mismatch: {destination}")
-    return sources[0], digest
+    source_file = destination.with_suffix(destination.suffix + ".source.json")
+    if source_file.exists():
+        saved = json.loads(source_file.read_text())
+        if saved.get("sha256") == digest and saved.get("url") in sources: return saved["url"], digest
+    # A pre-sidecar file cannot prove which mirror supplied it. Prefer the
+    # immutable checksum-verified mirror over claiming a possibly unavailable URL.
+    return sources[-1], digest
 
 
 def _choose(rows: list[dict], count: int, seed: int) -> list[dict]:

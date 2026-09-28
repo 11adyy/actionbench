@@ -30,7 +30,7 @@ actionbench resume --config experiment.json --manifest manifests/study.json
 actionbench report --config experiment.json --out artifacts/report.json
 ```
 
-Every campaign has an immutable configuration hash. A changed configuration requires a new campaign name. Completed evaluations are never rerun by `resume`.
+Every campaign has an immutable configuration hash. A changed configuration requires a new campaign name. The current ledger is `actionbench-v2.sqlite3`; it intentionally does not reuse the incompatible prototype ledger. Completed evaluations are never rerun by `resume`.
 
 ## Conditions
 
