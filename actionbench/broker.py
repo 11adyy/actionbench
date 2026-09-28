@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import urllib.error
 import urllib.request
 import uuid
@@ -79,15 +80,18 @@ class Broker:
                     chunks.append(content.get("text", ""))
         return "".join(chunks)
 
-    def call(self, episode_id: str, step_id: str, instructions: str, input_text: str, max_output_tokens: int) -> ModelResult:
-        existing = self.store.request_for_step(episode_id, step_id)
+    def call(self, episode_id: str, request_key: str, instructions: str, input_text: str, max_output_tokens: int) -> ModelResult:
+        """Issue or recover a request. Reuse is allowed only for byte-identical payloads."""
+        payload = {"model": self.config.provider.model, "instructions": instructions, "input": input_text, "max_output_tokens": max_output_tokens, "store": False}
+        request_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        existing = self.store.request_for(episode_id, request_key, request_hash)
         if existing:
             if existing["state"] == "completed":
                 raw = json.loads(existing["response_json"])
                 return ModelResult(self._text(raw), raw, existing["provider_request_id"], existing["input_tokens"], existing["cached_input_tokens"], existing["output_tokens"], existing["actual_usd"])
             if existing["state"] == "unknown_outcome":
-                raise UnknownProviderOutcome(f"Request {step_id} has unknown outcome and must be manually resolved")
-            raise UnknownProviderOutcome(f"Request {step_id} was interrupted in state {existing['state']}")
+                raise UnknownProviderOutcome(f"Request {request_key} has unknown outcome and must be manually resolved")
+            raise UnknownProviderOutcome(f"Request {request_key} was interrupted in state {existing['state']}")
         if max_output_tokens < 1 or max_output_tokens > self.config.budget.max_output_tokens:
             raise BudgetExceeded("Requested output tokens exceed the campaign limit")
         estimated_input = max(1, (len(instructions) + len(input_text) + 3) // 4)
@@ -102,8 +106,7 @@ class Broker:
         if self.store.campaign_spend(self.config.campaign) + reserve > self.config.budget.usd:
             raise BudgetExceeded("Campaign dollar budget would be exceeded")
         request_id = str(uuid.uuid4())
-        payload = {"model": self.config.provider.model, "instructions": instructions, "input": input_text, "max_output_tokens": max_output_tokens, "store": False}
-        self.store.reserve_request(request_id, episode_id, step_id, payload, reserve, estimated_input)
+        self.store.reserve_request(request_id, episode_id, request_key, request_hash, payload, reserve, estimated_input)
         self.store.mark_submitted(request_id)
         try:
             raw = self.client.request(payload)

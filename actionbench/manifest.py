@@ -16,6 +16,7 @@ class Task:
     public_input: Path
     reference_dir: Path
     grader: dict[str, Any]
+    split: str
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,14 @@ class Manifest:
     @property
     def tasks(self) -> tuple[Task, ...]:
         return tuple(task for family in self.families for task in family.tasks)
+
+    @property
+    def development_tasks(self) -> tuple[Task, ...]:
+        return tuple(task for task in self.tasks if task.split == "development")
+
+    @property
+    def test_tasks(self) -> tuple[Task, ...]:
+        return tuple(task for task in self.tasks if task.split == "test")
 
 
 def load_manifest(path: str | Path, dataset_root: Path) -> Manifest:
@@ -58,12 +67,14 @@ def load_manifest(path: str | Path, dataset_root: Path) -> Manifest:
             grader = row.get("grader") or {}
             if not grader.get("image") or not isinstance(grader.get("command"), list):
                 raise ConfigurationError(f"Task {task_id} needs a Docker grader image and command")
-            tasks.append(Task(task_id, family_id, (dataset_root / row["public_input"]).resolve(), (dataset_root / row["reference_dir"]).resolve(), grader))
+            split = str(row.get("split", "test"))
+            if split not in {"development", "test"}: raise ConfigurationError(f"Task {task_id} has invalid split")
+            tasks.append(Task(task_id, family_id, (dataset_root / row["public_input"]).resolve(), (dataset_root / row["reference_dir"]).resolve(), grader, split))
         if not tasks:
             raise ConfigurationError(f"Family {family_id} has no tasks")
         demos = tuple((dataset_root / d).resolve() for d in item.get("demonstrations", []))
         families.append(Family(family_id, str(item["creator_brief"]), demos, tuple(tasks)))
-    if not families:
+    if not families or not any(task.split == "test" for family in families for task in family.tasks):
         raise ConfigurationError("Manifest has no families")
     return Manifest(source, hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest(), tuple(families))
 
