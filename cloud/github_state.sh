@@ -28,7 +28,7 @@ case "${1:-}" in
   pack)
     if [ ! -s experiment.json ]; then echo 'No campaign config to save'; exit 0; fi
     mkdir -p artifacts
-    tar --exclude=state.tar.gz -czf .cloud-state/state.tar.gz experiment.json artifacts .cloud-state
+    tar --exclude=state.tar.gz --exclude=grader-images.tar.gz -czf .cloud-state/state.tar.gz experiment.json artifacts .cloud-state
     ;;
   *) echo 'Usage: github_state.sh restore|pack' >&2; exit 2 ;;
 esac
