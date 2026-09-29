@@ -12,8 +12,8 @@ if [ "$AB_ACTION" = start ]; then
     [ -n "${OPENAI_API_KEY:-}" ] || { echo 'Set OPENAI_API_KEY in GitHub repository Actions secrets' >&2; exit 2; }
     python cloud/configure.py
   fi
-elif [ "$AB_ACTION" = resume ]; then
-  if [ "${AB_CHECKPOINT_TEST:-}" != 1 ]; then
+elif [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = raise-budget ]; then
+  if [ "$AB_ACTION" = resume ] && [ "${AB_CHECKPOINT_TEST:-}" != 1 ]; then
     [ -n "${OPENAI_API_KEY:-}" ] || { echo 'Set OPENAI_API_KEY in GitHub repository Actions secrets' >&2; exit 2; }
   fi
   [ -s "$cfg" ] || { echo 'Missing restored campaign config' >&2; exit 2; }
@@ -24,6 +24,13 @@ elif [ "$AB_ACTION" = smoke ]; then
   cfg=config.example.json
 else
   echo 'Unknown action' >&2; exit 2
+fi
+
+if [ "$AB_ACTION" = raise-budget ]; then
+  python -m actionbench.cli budget --config "$cfg" --usd "$AB_BUDGET_USD"
+  python -m actionbench.cli status --config "$cfg" > artifacts/status.json
+  echo 'Budget ceiling raised. Run resume with the same campaign ID.'
+  exit 0
 fi
 
 if [ "$AB_ACTION" = resume ]; then

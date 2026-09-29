@@ -10,7 +10,7 @@ case "${1:-}" in
     if [ "$AB_ACTION" != smoke ]; then
       artifact_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq ".artifacts | map(select(.expired == false and (.name | startswith(\"$prefix\")))) | sort_by(.created_at) | last | .id // empty")
     fi
-    if [ "$AB_ACTION" = resume ]; then
+    if [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = raise-budget ]; then
       [ -n "$artifact_id" ] || { echo 'No saved campaign artifact exists to resume' >&2; exit 2; }
       gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > .cloud-state/download.zip
       unzip -p .cloud-state/download.zip state.tar.gz | tar -xz -C .
