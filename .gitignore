@@ -8,3 +8,9 @@ data/
 *.sqlite3
 .env
 *.egg-info/
+node_modules/
+.vercel/
+.env.local
+.cloud-state/
+experiment.json
+.vercel-control.json

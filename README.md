@@ -59,3 +59,5 @@ If all package revisions fail, `create-skills` records that failure and continue
 After completing the pilot, estimate a prospective sample size for each family with `actionbench plan-sample --config experiment.json --family mbppplus --baseline skill --target-delta 0.10 --target-half-width 0.05 --out artifacts/mbpp-design.json`. The command estimates task, package, and interaction variation from complete paired pilot results and evaluates candidate numbers of tasks and package replicas. These are exploratory normal approximations, especially uncertain with only three package replicas. Choose and freeze a new campaign's sample size before observing its test outcomes.
 
 The scientific design, analyses, reporting requirements, and paper outline are in [PROTOCOL.md](PROTOCOL.md).
+
+To execute the same Docker-based study inside a persistent Vercel Sandbox, see [cloud/README.md](cloud/README.md). A Vercel Function controls the Sandbox; the benchmark itself still runs inside Docker in the Sandbox.
