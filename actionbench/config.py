@@ -18,6 +18,8 @@ class ProviderConfig:
     input_usd_per_million: float
     cached_input_usd_per_million: float
     output_usd_per_million: float
+    cache_write_usd_per_million: float | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)

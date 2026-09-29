@@ -114,6 +114,33 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(row["state"], "unknown_outcome")
             self.assertIsNone(row["actual_usd"])
 
+    def test_cache_write_price_and_reasoning_are_frozen_in_real_request_ledger(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
+            replace = __import__("dataclasses").replace
+            config = replace(config, provider=replace(config.provider, model="gpt-6-luna", input_usd_per_million=.1,
+                cached_input_usd_per_million=.01, cache_write_usd_per_million=.125,
+                output_usd_per_million=.5, reasoning_effort="none"))
+            broker = Broker(config, store)
+            class Client:
+                def request(self, payload):
+                    self.payload = payload
+                    return {"id": "provider-1", "output_text": "OK", "usage": {
+                        "input_tokens": 100, "input_tokens_details": {"cached_tokens": 20, "cache_write_tokens": 30},
+                        "output_tokens": 10}}
+            broker.client = Client()
+            result = broker.call("e", "k", "i", "x", 20)
+            self.assertEqual(broker.client.payload["reasoning"], {"effort": "none"})
+            self.assertAlmostEqual(result.actual_usd, (50 * .1 + 20 * .01 + 30 * .125 + 10 * .5) / 1_000_000)
+            row = store.conn.execute("SELECT cache_write_tokens,request_json,actual_usd FROM requests WHERE episode_id='e'").fetchone()
+            self.assertEqual(row["cache_write_tokens"], 30)
+            self.assertEqual(json.loads(row["request_json"])["reasoning"], {"effort": "none"})
+            self.assertEqual(row["actual_usd"], result.actual_usd)
+            self.assertGreaterEqual(broker.estimate_usd(100, 10), (100 * .125 + 10 * .5) / 1_000_000)
+            with self.assertRaises(UnknownProviderOutcome):
+                broker._usage({"usage": {"input_tokens": 100, "output_tokens": 10,
+                    "input_tokens_details": {"cached_tokens": 80, "cache_write_tokens": 30}}})
+
     def test_unknown_request_reconciles_with_audited_response(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "task", "f", "action", 0)

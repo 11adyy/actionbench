@@ -35,6 +35,13 @@ def main() -> None:
     data["provider"]["input_usd_per_million"] = price("AB_INPUT_USD_PER_MILLION")
     data["provider"]["cached_input_usd_per_million"] = price("AB_CACHED_INPUT_USD_PER_MILLION", positive=False) if os.environ.get("AB_CACHED_INPUT_USD_PER_MILLION") else 0.0
     data["provider"]["output_usd_per_million"] = price("AB_OUTPUT_USD_PER_MILLION")
+    if os.environ.get("AB_CACHE_WRITE_USD_PER_MILLION"):
+        data["provider"]["cache_write_usd_per_million"] = price("AB_CACHE_WRITE_USD_PER_MILLION")
+    if os.environ.get("AB_REASONING_EFFORT"):
+        effort = os.environ["AB_REASONING_EFFORT"]
+        if effort not in {"none", "low", "medium", "high", "xhigh"}:
+            raise ValueError("AB_REASONING_EFFORT must be a supported reasoning level")
+        data["provider"]["reasoning_effort"] = effort
     if os.environ.get("AB_BUDGET_USD"):
         data["budget"]["usd"] = price("AB_BUDGET_USD")
     target = Path("experiment.json")

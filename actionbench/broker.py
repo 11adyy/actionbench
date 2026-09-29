@@ -61,7 +61,8 @@ class Broker:
 
     def estimate_usd(self, input_tokens: int, max_output_tokens: int) -> float:
         p = self.config.provider
-        return (input_tokens * p.input_usd_per_million + max_output_tokens * p.output_usd_per_million) / 1_000_000
+        input_price = max(p.input_usd_per_million, p.cache_write_usd_per_million or 0)
+        return (input_tokens * input_price + max_output_tokens * p.output_usd_per_million) / 1_000_000
 
     def remaining_output_tokens(self, episode_id: str) -> int:
         return max(0, self.config.budget.max_output_tokens - self.store.episode_limits(episode_id)[2])
@@ -72,17 +73,19 @@ class Broker:
         usage = raw["usage"]
         details = usage.get("input_tokens_details") or {}
         try:
-            tokens = {"input_tokens": int(usage["input_tokens"]), "cached_input_tokens": int(details.get("cached_tokens", 0)), "output_tokens": int(usage["output_tokens"])}
+            tokens = {"input_tokens": int(usage["input_tokens"]), "cached_input_tokens": int(details.get("cached_tokens", 0)), "cache_write_tokens": int(details.get("cache_write_tokens", 0)), "output_tokens": int(usage["output_tokens"])}
         except (KeyError, TypeError, ValueError) as exc:
             raise UnknownProviderOutcome("Provider response has malformed token usage") from exc
-        if tokens["input_tokens"] < 1 or tokens["output_tokens"] < 0 or not 0 <= tokens["cached_input_tokens"] <= tokens["input_tokens"]:
+        if tokens["input_tokens"] < 1 or tokens["output_tokens"] < 0 or min(tokens["cached_input_tokens"], tokens["cache_write_tokens"]) < 0 or tokens["cached_input_tokens"] + tokens["cache_write_tokens"] > tokens["input_tokens"]:
             raise UnknownProviderOutcome("Provider response has impossible token usage")
         return tokens
 
     def _cost(self, usage: dict[str, int]) -> float:
         p = self.config.provider
-        uncached = max(0, usage["input_tokens"] - usage["cached_input_tokens"])
-        return (uncached * p.input_usd_per_million + usage["cached_input_tokens"] * p.cached_input_usd_per_million + usage["output_tokens"] * p.output_usd_per_million) / 1_000_000
+        writes = usage.get("cache_write_tokens", 0)
+        uncached = usage["input_tokens"] - usage["cached_input_tokens"] - writes
+        write_price = p.cache_write_usd_per_million if p.cache_write_usd_per_million is not None else p.input_usd_per_million
+        return (uncached * p.input_usd_per_million + writes * write_price + usage["cached_input_tokens"] * p.cached_input_usd_per_million + usage["output_tokens"] * p.output_usd_per_million) / 1_000_000
 
     @staticmethod
     def _text(raw: dict) -> str:
@@ -111,6 +114,8 @@ class Broker:
     def call(self, episode_id: str, request_key: str, instructions: str, input_text: str, max_output_tokens: int, *, timeout_seconds: float | None = None) -> ModelResult:
         """Issue or recover a request. Reuse is allowed only for byte-identical payloads."""
         payload = {"model": self.config.provider.model, "instructions": instructions, "input": input_text, "max_output_tokens": max_output_tokens, "store": False}
+        if self.config.provider.reasoning_effort is not None:
+            payload["reasoning"] = {"effort": self.config.provider.reasoning_effort}
         request_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         existing = self.store.request_for(episode_id, request_key, request_hash)
         if existing:
