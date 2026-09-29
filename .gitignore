@@ -14,3 +14,5 @@ node_modules/
 .cloud-state/
 experiment.json
 .vercel-control.json
+.vercel
+.env*

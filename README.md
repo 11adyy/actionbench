@@ -60,4 +60,4 @@ After completing the pilot, estimate a prospective sample size for each family w
 
 The scientific design, analyses, reporting requirements, and paper outline are in [PROTOCOL.md](PROTOCOL.md).
 
-To execute the same Docker-based study inside a persistent Vercel Sandbox, see [cloud/README.md](cloud/README.md). A Vercel Function controls the Sandbox; the benchmark itself still runs inside Docker in the Sandbox.
+For a hosted run on GitHub's standard Ubuntu runner, see [cloud/README.md](cloud/README.md). The workflow executes the real Docker graders and model calls, saves the SQLite ledger after each run, and resumes the same pinned campaign from an artifact. The Vercel project is a launch page; GitHub Actions performs the evaluation.

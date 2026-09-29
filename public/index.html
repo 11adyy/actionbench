@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ActionBench — evaluaciones</title>
+<style>
+  :root { color-scheme: dark; font: 17px/1.5 system-ui, sans-serif; background: #101114; color: #f3f4f6; }
+  body { max-width: 760px; margin: 8vh auto; padding: 0 24px; }
+  h1 { font-size: clamp(2.2rem, 6vw, 4rem); line-height: 1.08; letter-spacing: -.04em; }
+  p { color: #bbc0c9; }
+  ol { padding-left: 1.5em; }
+  li { margin: .9em 0; }
+  a { color: #9ac7ff; }
+  .button { display: inline-block; padding: .8em 1.2em; margin: 1em .7em 1em 0; border-radius: 10px; background: #f3f4f6; color: #111; font-weight: 700; text-decoration: none; }
+  .secondary { background: #282d35; color: #f3f4f6; }
+  code { color: #c8ffcc; }
+  footer { margin-top: 3em; font-size: .85em; }
+</style>
+<main>
+  <h1>ActionBench</h1>
+  <p>Evaluaciones reales de skills y actions: modelos reales, Docker con límites de recursos y resultados reanudables.</p>
+  <a class="button" href="https://github.com/11adyy/actionbench/actions/workflows/evaluate.yml">Abrir evaluaciones</a>
+  <a class="button secondary" href="https://github.com/11adyy/actionbench/settings/secrets/actions">Configurar API</a>
+  <ol>
+    <li>Guarda tu clave como secreto <code>OPENAI_API_KEY</code> en GitHub.</li>
+    <li>En «Abrir evaluaciones», pulsa «Run workflow», elige <code>start</code> y escribe modelo, precios y presupuesto.</li>
+    <li>Si se interrumpe, vuelve a ejecutarlo con <code>resume</code> y el mismo nombre de campaña. Descarga el artefacto del último run para obtener el informe y el estado.</li>
+  </ol>
+  <p>También puedes elegir <code>smoke</code> para probar los evaluadores oficiales sin consumir tu API.</p>
+  <footer><a href="https://github.com/11adyy/actionbench/blob/main/cloud/README.md">Guía completa</a> · El alojamiento del runner público es gratuito; el uso del modelo depende de tu proveedor.</footer>
+</main>
+</html>

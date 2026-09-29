@@ -1,7 +1,0 @@
-{
-  "name": "actionbench-vercel-controller",
-  "private": true,
-  "type": "module",
-  "engines": {"node": ">=20"},
-  "dependencies": {"@vercel/sandbox": "3.5.1"}
-}
