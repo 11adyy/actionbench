@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Sandbox } from '@vercel/sandbox';
 
-const ROOT = '/vercel/sandbox';
+const ROOT = '/vercel/actionbench';
 const STATE = `${ROOT}/.cloud-state`;
 const REPO = 'https://github.com/11adyy/actionbench.git';
 const SESSION_MS = 44 * 60 * 1000;

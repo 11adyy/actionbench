@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-cd /vercel/sandbox
+cd /vercel/actionbench
 mode="${1:-}"
-state_dir=/vercel/sandbox/.cloud-state
+state_dir=/vercel/actionbench/.cloud-state
 mkdir -p "$state_dir"
 exec 9>"$state_dir/worker.lock"
 if ! flock -n 9; then
@@ -69,8 +69,8 @@ import json
 from pathlib import Path
 data = json.loads(Path('config.example.json').read_text())
 data['campaign'] = 'cloud-smoke'
-data['dataset_root'] = '/vercel/sandbox/data'
-data['artifact_root'] = '/vercel/sandbox/.cloud-state/smoke-artifacts'
+data['dataset_root'] = '/vercel/actionbench/data'
+data['artifact_root'] = '/vercel/actionbench/.cloud-state/smoke-artifacts'
 Path('.cloud-state/smoke.json').write_text(json.dumps(data))
 PY
   .cloud-venv/bin/python -m actionbench.cli smoke --config "$state_dir/smoke.json" --manifest manifests/study.json
