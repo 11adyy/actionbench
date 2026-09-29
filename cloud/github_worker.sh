@@ -6,11 +6,20 @@ cfg=experiment.json
 manifest=manifests/study.json
 
 if [ "$AB_ACTION" = start ]; then
-  [ -n "${OPENAI_API_KEY:-}" ] || { echo 'Set OPENAI_API_KEY in GitHub repository Actions secrets' >&2; exit 2; }
-  python cloud/configure.py
+  if [ "${AB_CHECKPOINT_TEST:-}" = 1 ]; then
+    cp config.example.json experiment.json
+  else
+    [ -n "${OPENAI_API_KEY:-}" ] || { echo 'Set OPENAI_API_KEY in GitHub repository Actions secrets' >&2; exit 2; }
+    python cloud/configure.py
+  fi
 elif [ "$AB_ACTION" = resume ]; then
-  [ -n "${OPENAI_API_KEY:-}" ] || { echo 'Set OPENAI_API_KEY in GitHub repository Actions secrets' >&2; exit 2; }
+  if [ "${AB_CHECKPOINT_TEST:-}" != 1 ]; then
+    [ -n "${OPENAI_API_KEY:-}" ] || { echo 'Set OPENAI_API_KEY in GitHub repository Actions secrets' >&2; exit 2; }
+  fi
   [ -s "$cfg" ] || { echo 'Missing restored campaign config' >&2; exit 2; }
+  if [ "${AB_CHECKPOINT_TEST:-}" = 1 ]; then
+    [ -s artifacts/actionbench-v3.sqlite3 ] || { echo 'SQLite checkpoint was not restored' >&2; exit 2; }
+  fi
 elif [ "$AB_ACTION" = smoke ]; then
   cfg=config.example.json
 else
@@ -35,6 +44,10 @@ python -m actionbench.cli datasets prepare --config "$cfg" --manifest "$manifest
 python -m actionbench.cli smoke --config "$cfg" --manifest "$manifest"
 if [ "$AB_ACTION" = smoke ]; then
   echo 'Real official Docker graders passed correct and incorrect controls.'
+  exit 0
+fi
+if [ "${AB_CHECKPOINT_TEST:-}" = 1 ]; then
+  echo 'Real Docker smoke and checkpoint roundtrip passed.'
   exit 0
 fi
 

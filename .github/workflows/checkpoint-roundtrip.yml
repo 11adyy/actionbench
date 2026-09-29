@@ -1,0 +1,72 @@
+name: Verify resumable hosted state
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  checkpoint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      AB_ACTION: start
+      AB_CHECKPOINT_TEST: "1"
+      AB_CAMPAIGN: checkpoint-${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Initialize state
+        id: state
+        run: bash cloud/github_state.sh restore
+      - run: python -m pip install -e .
+      - name: Execute real Docker smoke and save image archive
+        run: bash cloud/github_worker.sh
+      - name: Cache exact Docker images
+        uses: actions/cache/save@v4
+        with:
+          path: .cloud-state/grader-images.tar.gz
+          key: checkpoint-images-${{ github.run_id }}
+      - name: Pack SQLite and campaign state
+        run: bash cloud/github_state.sh pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: actionbench-state-checkpoint-${{ github.run_id }}-${{ github.run_id }}-1
+          path: .cloud-state/state.tar.gz
+          retention-days: 1
+          compression-level: 0
+
+  restore:
+    needs: checkpoint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      AB_ACTION: resume
+      AB_CHECKPOINT_TEST: "1"
+      AB_CAMPAIGN: checkpoint-${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Restore artifact and pinned source commit
+        run: bash cloud/github_state.sh restore
+      - run: python -m pip install -e .
+      - name: Restore exact grader images
+        uses: actions/cache/restore@v4
+        with:
+          path: .cloud-state/grader-images.tar.gz
+          key: checkpoint-images-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - name: Verify restored SQLite, Docker images, dataset and graders
+        run: bash cloud/github_worker.sh
