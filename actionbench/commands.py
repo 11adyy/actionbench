@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -200,7 +201,22 @@ def _container_smoke(config) -> dict:
                                 {"value": "round-trip"}, action_dir=action)
         if result != {"value": "round-trip", "readonly": True}:
             raise InfrastructureError(f"Production container runner failed its real round trip: {result}")
-        return {"passed": True, "colon_path": True, "readonly_action": True, "jsonl_round_trip": True}
+        (action / "slow.py").write_text("import time\ntime.sleep(30)\n")
+        timed = ContainerRunner(replace(config, execution=replace(config.execution, timeout_seconds=1)), None)
+        try:
+            timed.execute("smoke:timeout", "docker-timeout", root / "timeout:workspace",
+                          ["python", "/action/slow.py"], {}, action_dir=action)
+        except ActionBenchError as exc:
+            if "wall-clock limit" not in str(exc):
+                raise InfrastructureError(f"Timeout smoke failed for the wrong reason: {exc}") from exc
+        else:
+            raise InfrastructureError("Production container runner did not enforce its wall-clock limit")
+        remaining = subprocess.run(["docker", "ps", "-a", "--filter", "name=actionbench-", "--format", "{{.Names}}"],
+                                   capture_output=True, text=True, check=True)
+        if remaining.stdout.strip():
+            raise InfrastructureError(f"Container cleanup left a running or stopped action: {remaining.stdout.strip()}")
+        return {"passed": True, "colon_path": True, "readonly_action": True, "jsonl_round_trip": True,
+                "timeout": True, "container_cleanup": True}
 
 
 def _sample_procedure_input(schema: dict, public: dict) -> dict:
