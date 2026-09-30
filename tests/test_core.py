@@ -222,6 +222,22 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(report["provider_policy_events_by_phase"]["test"], 1)
             self.assertIn("provider_content_filter_or_policy_rejection_in_test", report["validation_reasons"])
 
+    def test_report_checks_action_adoption_for_each_family(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            for family in ("first", "second"):
+                episode = f"{family}-action"
+                store.create_episode(episode, config.campaign, f"task-{family}", family, "action", 0)
+                store.save_evaluation(episode, family, {"primary": 0.5})
+                store.set_episode(episode, "completed", retryable=False)
+            store.create_action_run("run", "first-action", "step", "procedure", "input", "/tmp/workspace")
+            store.set_action_run("run", "completed", output={"ok": True})
+            store.bind_study(config.campaign, "manifest", "harness", {"image": "digest"}, 2)
+            report = build_report(config, store)
+            self.assertEqual(report["action_invocations_by_family"], {"first": 1})
+            self.assertIn("no_action_invocation_observed:second", report["validation_reasons"])
+            self.assertNotIn("no_action_invocation_observed:first", report["validation_reasons"])
+
     def test_policy_preparation_includes_paired_skill_and_development(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d))
