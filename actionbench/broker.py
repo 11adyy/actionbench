@@ -22,6 +22,7 @@ class ModelResult:
     cached_input_tokens: int
     output_tokens: int
     actual_usd: float
+    request_id: str | None = None
 
 
 class OpenAIResponsesClient:
@@ -98,16 +99,18 @@ class Broker:
                     chunks.append(content.get("text", ""))
         return "".join(chunks)
 
-    @staticmethod
-    def _checked_result(result: ModelResult) -> ModelResult:
+    def _checked_result(self, result: ModelResult) -> ModelResult:
         raw = result.raw
         status = raw.get("status")
         if status not in (None, "completed"):
+            if result.request_id: self.store.mark_output_validation(result.request_id, "invalid")
             reason = (raw.get("incomplete_details") or {}).get("reason")
             raise ProviderOutputError(f"Provider response {result.provider_request_id} has status {status}: {reason or 'no reason'}")
         if any(content.get("type") == "refusal" for item in raw.get("output", [])
                if isinstance(item, dict) for content in item.get("content", []) if isinstance(content, dict)):
+            if result.request_id: self.store.mark_output_validation(result.request_id, "invalid")
             raise ProviderOutputError(f"Provider response {result.provider_request_id} contains a refusal")
+        if result.request_id: self.store.mark_output_validation(result.request_id, "provider_complete")
         return result
 
     def _complete(self, request_id: str, raw: dict) -> ModelResult:
@@ -121,7 +124,7 @@ class Broker:
         self.store.complete_request(request_id, raw.get("id"), raw, usage, actual)
         if reservation and (actual > reservation["reserved_usd"] or usage["input_tokens"] > reservation["reserved_input_tokens"]):
             self.store.event(None, "provider_usage_exceeded_reservation", {"request_id": request_id, "reserved_usd": reservation["reserved_usd"], "actual_usd": actual, "reserved_input_tokens": reservation["reserved_input_tokens"], "actual_input_tokens": usage["input_tokens"]})
-        return ModelResult(self._text(raw), raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual)
+        return ModelResult(self._text(raw), raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual, request_id)
 
     def call(self, episode_id: str, request_key: str, instructions: str, input_text: str, max_output_tokens: int, *, timeout_seconds: float | None = None, response_format: dict | None = None) -> ModelResult:
         """Issue or recover a request. Reuse is allowed only for byte-identical payloads."""
@@ -135,7 +138,7 @@ class Broker:
         if existing:
             if existing["state"] == "completed":
                 raw = json.loads(existing["response_json"])
-                return self._checked_result(ModelResult(self._text(raw), raw, existing["provider_request_id"], existing["input_tokens"], existing["cached_input_tokens"], existing["output_tokens"], existing["actual_usd"]))
+                return self._checked_result(ModelResult(self._text(raw), raw, existing["provider_request_id"], existing["input_tokens"], existing["cached_input_tokens"], existing["output_tokens"], existing["actual_usd"], existing["request_id"]))
             if existing["state"] == "unknown_outcome":
                 raise UnknownProviderOutcome(f"Request {request_key} has unknown outcome and must be manually resolved")
             if existing["state"] == "submitted":

@@ -75,7 +75,9 @@ class Store:
           request_key TEXT NOT NULL, request_hash TEXT NOT NULL, provider_request_id TEXT, state TEXT NOT NULL,
           request_json TEXT NOT NULL, response_json TEXT, reserved_usd REAL NOT NULL,
           reserved_input_tokens INTEGER NOT NULL, actual_usd REAL, input_tokens INTEGER,
-          cached_input_tokens INTEGER, cache_write_tokens INTEGER, output_tokens INTEGER, created_at TEXT NOT NULL, completed_at TEXT,
+          cached_input_tokens INTEGER, cache_write_tokens INTEGER, output_tokens INTEGER,
+          response_status TEXT, incomplete_reason TEXT, model_returned TEXT, output_validation TEXT,
+          created_at TEXT NOT NULL, completed_at TEXT,
           UNIQUE(episode_id,request_key,request_hash)
         );
         CREATE TABLE IF NOT EXISTS action_runs (
@@ -113,6 +115,10 @@ class Store:
             "ALTER TABLE requests ADD COLUMN request_hash TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE requests ADD COLUMN reserved_input_tokens INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE requests ADD COLUMN cache_write_tokens INTEGER",
+            "ALTER TABLE requests ADD COLUMN response_status TEXT",
+            "ALTER TABLE requests ADD COLUMN incomplete_reason TEXT",
+            "ALTER TABLE requests ADD COLUMN model_returned TEXT",
+            "ALTER TABLE requests ADD COLUMN output_validation TEXT",
             "ALTER TABLE action_runs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
         ):
             try: self.conn.execute(statement)
@@ -220,8 +226,8 @@ class Store:
                 conn.execute("UPDATE requests SET state='rejected',completed_at=? WHERE request_id=?", (now(), request_id))
                 resolution = "confirmed_not_executed"
             else:
-                conn.execute("""UPDATE requests SET state='completed',provider_request_id=?,response_json=?,actual_usd=?,input_tokens=?,cached_input_tokens=?,cache_write_tokens=?,output_tokens=?,completed_at=? WHERE request_id=?""",
-                             (response.get("id"), json.dumps(response, sort_keys=True), actual_usd, usage["input_tokens"], usage["cached_input_tokens"], usage.get("cache_write_tokens", 0), usage["output_tokens"], now(), request_id))
+                conn.execute("""UPDATE requests SET state='completed',provider_request_id=?,response_json=?,actual_usd=?,input_tokens=?,cached_input_tokens=?,cache_write_tokens=?,output_tokens=?,response_status=?,incomplete_reason=?,model_returned=?,completed_at=? WHERE request_id=?""",
+                             (response.get("id"), json.dumps(response, sort_keys=True), actual_usd, usage["input_tokens"], usage["cached_input_tokens"], usage.get("cache_write_tokens", 0), usage["output_tokens"], response.get("status"), (response.get("incomplete_details") or {}).get("reason"), response.get("model"), now(), request_id))
                 resolution = "provider_response_recovered"
             conn.execute("UPDATE episodes SET status='queued',retryable=1,error=NULL,updated_at=? WHERE episode_id=?", (now(), row["episode_id"]))
             if row["task_id"].startswith("creation-dev:"):
@@ -244,8 +250,16 @@ class Store:
 
     def complete_request(self, request_id: str, provider_request_id: str | None, response: dict, usage: dict, actual_usd: float) -> None:
         with self.tx() as conn:
-            conn.execute("""UPDATE requests SET state='completed',provider_request_id=?,response_json=?,actual_usd=?,input_tokens=?,cached_input_tokens=?,cache_write_tokens=?,output_tokens=?,completed_at=?
-                         WHERE request_id=? AND state='submitted'""", (provider_request_id, json.dumps(response, sort_keys=True), actual_usd, usage.get("input_tokens", 0), usage.get("cached_input_tokens", 0), usage.get("cache_write_tokens", 0), usage.get("output_tokens", 0), now(), request_id))
+            conn.execute("""UPDATE requests SET state='completed',provider_request_id=?,response_json=?,actual_usd=?,input_tokens=?,cached_input_tokens=?,cache_write_tokens=?,output_tokens=?,response_status=?,incomplete_reason=?,model_returned=?,completed_at=?
+                         WHERE request_id=? AND state='submitted'""", (provider_request_id, json.dumps(response, sort_keys=True), actual_usd, usage.get("input_tokens", 0), usage.get("cached_input_tokens", 0), usage.get("cache_write_tokens", 0), usage.get("output_tokens", 0), response.get("status"), (response.get("incomplete_details") or {}).get("reason"), response.get("model"), now(), request_id))
+
+    def mark_output_validation(self, request_id: str, status: str) -> None:
+        if status not in {"provider_complete", "accepted", "invalid"}:
+            raise ValueError("Unknown output validation status")
+        if status == "provider_complete":
+            self.conn.execute("UPDATE requests SET output_validation=? WHERE request_id=? AND state='completed' AND output_validation IS NULL", (status, request_id))
+        else:
+            self.conn.execute("UPDATE requests SET output_validation=? WHERE request_id=? AND state='completed'", (status, request_id))
 
     def unknown_request(self, request_id: str, detail: str) -> None:
         self.conn.execute("UPDATE requests SET state='unknown_outcome',completed_at=? WHERE request_id=? AND state='submitted'", (now(), request_id))

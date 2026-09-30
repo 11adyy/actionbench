@@ -83,7 +83,8 @@ class CoreTests(unittest.TestCase):
             for _ in range(2):
                 with self.assertRaises(ProviderOutputError): broker.call("e", "k", "i", "x", 4)
             self.assertEqual(broker.client.calls, 1)
-            self.assertEqual(store.conn.execute("SELECT state FROM requests").fetchone()[0], "completed")
+            saved = store.conn.execute("SELECT state,response_status,incomplete_reason,output_validation FROM requests").fetchone()
+            self.assertEqual(tuple(saved), ("completed", "incomplete", "max_output_tokens", "invalid"))
             self.assertGreater(store.campaign_spend(config.campaign), 0)
 
     def test_generated_procedure_underscores_and_paired_skill(self):

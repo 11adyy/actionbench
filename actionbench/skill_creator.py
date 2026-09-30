@@ -96,16 +96,23 @@ def create_package(broker: Broker, episode_id: str, family: Family, replica: int
         raise BudgetExceeded(f"Creation output budget exhausted before revision {revision}")
     result = broker.call(episode_id, f"package-{kind}-draft-{revision}", instructions, prompt,
                          min(4096, available), response_format=package_format(kind))
-    package = _decode(result.text, kind)
-    if kind in {"skill_script", "action"}:
-        if not isinstance(base_skill_md, str) or not base_skill_md.strip(): raise ActionBenchError("Paired skill is missing")
-        if not package["procedures"]: raise ActionBenchError("Procedure package must expose at least one procedure")
-        if len(package["procedures"]) > 2: raise ActionBenchError("Procedure package exceeds the two-procedure limit")
-        seen = set()
-        for procedure in package["procedures"]:
-            _validate_procedure(procedure, kind)
-            if procedure["id"] in seen: raise ActionBenchError("Procedure ids must be unique")
-            seen.add(procedure["id"])
+    try:
+        package = _decode(result.text, kind)
+        if kind in {"skill_script", "action"}:
+            if not isinstance(base_skill_md, str) or not base_skill_md.strip(): raise ActionBenchError("Paired skill is missing")
+            if not package["procedures"]: raise ActionBenchError("Procedure package must expose at least one procedure")
+            if len(package["procedures"]) > 2: raise ActionBenchError("Procedure package exceeds the two-procedure limit")
+            seen = set()
+            for procedure in package["procedures"]:
+                _validate_procedure(procedure, kind)
+                if procedure["id"] in seen: raise ActionBenchError("Procedure ids must be unique")
+                seen.add(procedure["id"])
+    except ActionBenchError:
+        if getattr(result, "request_id", None) and hasattr(broker, "store"):
+            broker.store.mark_output_validation(result.request_id, "invalid")
+        raise
+    if getattr(result, "request_id", None) and hasattr(broker, "store"):
+        broker.store.mark_output_validation(result.request_id, "accepted")
     staging = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.building")
     staging.mkdir(parents=True, exist_ok=False)
     (staging / "SKILL.md").write_text(package["skill_md"] if kind == "skill" else base_skill_md)

@@ -40,6 +40,8 @@ class AgentRunner:
         last_protocol_error = None
         for index in range(self.broker.config.budget.max_llm_calls):
             available = self.broker.remaining_output_tokens(episode_id) if hasattr(self.broker, "remaining_output_tokens") else self.broker.config.budget.max_output_tokens
+            result = None
+            accepted_decision = False
             try:
                 result = self.broker.call(episode_id, f"agent-decision-{index}", AGENT_INSTRUCTIONS,
                                           json.dumps(context, sort_keys=True), min(2048, available),
@@ -56,6 +58,8 @@ class AgentRunner:
                         raise ActionBenchError("Final decision must leave tool fields null")
                     if not isinstance(decision["answer"], str) or not decision["answer"].strip():
                         raise ActionBenchError("Final decision needs a nonempty answer")
+                    if getattr(result, "request_id", None) and hasattr(self.broker, "store"):
+                        self.broker.store.mark_output_validation(result.request_id, "accepted")
                     return decision["answer"]
                 if kind not in enabled:
                     raise ActionBenchError(f"Tool {kind} is unavailable in {condition}")
@@ -72,6 +76,9 @@ class AgentRunner:
                         raise ActionBenchError("Code decision must leave procedure_id null")
                     if not isinstance(decision["code"], str) or not decision["code"].strip():
                         raise ActionBenchError(f"{kind} requires nonempty code")
+                    if getattr(result, "request_id", None) and hasattr(self.broker, "store"):
+                        self.broker.store.mark_output_validation(result.request_id, "accepted")
+                    accepted_decision = True
                     if kind == "code":
                         output = self.tools.run_plain_program(episode_id, f"code-{index}", decision["code"], input_data)
                     else:
@@ -89,6 +96,9 @@ class AgentRunner:
                     Draft202012Validator(schema).validate(input_data)
                 except ValidationError as exc:
                     raise ActionBenchError(f"Procedure {procedure_id} input violates schema: {exc.message}") from exc
+                if getattr(result, "request_id", None) and hasattr(self.broker, "store"):
+                    self.broker.store.mark_output_validation(result.request_id, "accepted")
+                accepted_decision = True
                 root = package_dir / "procedures" / procedure_id
                 output = self.tools.run(episode_id, root, f"procedure-{index}", input_data, allow_llm=condition == "action")
                 context["observations"].append({"tool": "procedure", "procedure_id": procedure_id, "output": output})
@@ -98,6 +108,8 @@ class AgentRunner:
                 repairs += 1
                 last_protocol_error = str(exc)
                 if hasattr(self.broker, "store"):
+                    if result is not None and getattr(result, "request_id", None) and not accepted_decision:
+                        self.broker.store.mark_output_validation(result.request_id, "invalid")
                     self.broker.store.event(episode_id, "agent_protocol_repair", {"attempt": index, "error": str(exc)[:300]})
                 if repairs > 2:
                     raise ActionBenchError(f"Agent protocol failed after two repairs: {exc}") from exc
