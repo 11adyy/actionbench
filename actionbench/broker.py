@@ -123,6 +123,8 @@ class Broker:
         if status not in (None, "completed"):
             if result.request_id: self.store.mark_output_validation(result.request_id, "invalid")
             reason = (raw.get("incomplete_details") or {}).get("reason")
+            if reason == "content_filter":
+                raise ProviderRejectedError(f"Provider content filter stopped response {result.provider_request_id}")
             raise ProviderOutputError(f"Provider response {result.provider_request_id} has status {status}: {reason or 'no reason'}")
         if any(content.get("type") == "refusal" for item in raw.get("output", [])
                if isinstance(item, dict) for content in item.get("content", []) if isinstance(content, dict)):

@@ -114,7 +114,7 @@ class CoreTests(unittest.TestCase):
                     return raw
             broker.client = Client()
             for _ in range(2):
-                with self.assertRaises(ProviderOutputError): broker.call("e", "k", "i", "x", 4)
+                with self.assertRaises(ProviderRejectedError): broker.call("e", "k", "i", "x", 4)
             self.assertEqual(broker.client.calls, 1)
             row = store.conn.execute("SELECT state,actual_usd,incomplete_reason,output_validation FROM requests").fetchone()
             self.assertEqual(tuple(row), ("completed", 0.0, "content_filter", "invalid"))
