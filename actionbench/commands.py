@@ -291,7 +291,73 @@ def _canary(config, store, manifest) -> dict:
                 raise ActionBenchError(f"Canary action {procedure['id']} made no brokered model call")
             outcomes.append({"family": family.id, "kind": kind, "package_hash": package["package_hash"],
                              "procedure_id": procedure["id"], "direct_model_calls": calls})
-    return {"passed": True, "checks": outcomes}
+    natural = _canary_natural_evaluations(config, store, manifest)
+    return {"passed": True, "direct_checks": outcomes, "natural_evaluations": natural}
+
+
+def _canary_natural_evaluations(config, store, manifest) -> list[dict]:
+    """Run the actual agent and official grader for all conditions on held-out development inputs."""
+    broker = Broker(config, store)
+    agent = AgentRunner(broker, ActionRunner(config, broker))
+    outcomes = []
+    for family in manifest.families:
+        task = next((item for item in family.tasks if item.split == "development"), None)
+        if task is None:
+            raise ActionBenchError(f"Canary needs development tasks for {family.id}")
+        for condition in config.conditions:
+            episode = _id(config.campaign, "canary-natural", task.id, condition, 0)
+            package_kind = "skill" if condition in {"skill", "improvised"} else condition
+            package = store.package(config.campaign, family.id, 0, package_kind) if condition != "plain" else None
+            package_dir = _verified_package(package) if package else None
+            package_hash = package["package_hash"] if package else None
+            store.create_episode(episode, config.campaign, f"canary-natural:{task.id}", "integration", condition, 0, package_hash)
+            existing = store.episode(episode)
+            answer_path = config.artifact_root / "answers" / config.campaign / f"{episode}.txt"
+            saved = store.evaluation(episode)
+            if existing["status"] == "completed" and saved:
+                score = json.loads(saved["score_json"])
+            elif existing["status"] == "failed" and not existing["retryable"]:
+                score = None
+            else:
+                store.set_episode(episode, "running")
+                started = time.monotonic()
+                try:
+                    if existing["final_artifact"]:
+                        answer = _read_saved_answer(existing, answer_path)
+                    else:
+                        answer = agent.run(episode, task.public_input.read_text(), condition,
+                                           package_dir if condition in {"skill", "skill_script", "improvised"} else None,
+                                           package_dir if condition == "action" else None)
+                        answer_path.parent.mkdir(parents=True, exist_ok=True)
+                        answer_path.write_text(answer)
+                        store.save_answer(episode, str(answer_path))
+                    score = grade(task, answer)
+                    store.save_evaluation(episode, task.family, score)
+                    store.set_episode(episode, "completed", final_artifact=str(answer_path), retryable=False)
+                except UnknownProviderOutcome as exc:
+                    store.set_episode(episode, "blocked", error=str(exc), retryable=False, failure_kind="provider_outcome_unknown")
+                    raise
+                except (CampaignBudgetExceeded, InfrastructureError, ConfigurationError) as exc:
+                    store.set_episode(episode, "queued", error=str(exc))
+                    raise
+                except BudgetExceeded as exc:
+                    store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind="episode_budget_exhausted")
+                    score = None
+                except ActionBenchError as exc:
+                    store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind="agent_error")
+                    score = None
+                except Exception as exc:
+                    store.set_episode(episode, "failed", error=str(exc), retryable=True)
+                    raise
+                finally:
+                    store.add_episode_duration(episode, time.monotonic() - started)
+            row = store.episode(episode)
+            calls = store.conn.execute("SELECT COUNT(*) FROM requests WHERE episode_id=? AND state='completed'", (episode,)).fetchone()[0]
+            invocations = store.conn.execute("SELECT COUNT(*) FROM action_runs WHERE episode_id=?", (episode,)).fetchone()[0]
+            outcomes.append({"family": family.id, "condition": condition, "task_id": task.id, "episode_id": episode,
+                             "status": row["status"], "failure_kind": row["failure_kind"], "score": score,
+                             "model_calls": calls, "procedure_invocations": invocations})
+    return outcomes
 
 
 def _smoke(manifest: Manifest, config) -> dict:
