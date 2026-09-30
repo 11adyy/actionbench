@@ -98,14 +98,24 @@ class Broker:
 
     @staticmethod
     def _text(raw: dict) -> str:
-        if isinstance(raw.get("output_text"), str):
-            return raw["output_text"]
-        chunks: list[str] = []
+        messages: list[tuple[str | None, str]] = []
         for item in raw.get("output", []):
+            if not isinstance(item, dict) or item.get("type") != "message" or item.get("role") != "assistant":
+                continue
+            chunks: list[str] = []
             for content in item.get("content", []):
-                if content.get("type") in {"output_text", "text"}:
+                if isinstance(content, dict) and content.get("type") in {"output_text", "text"}:
                     chunks.append(content.get("text", ""))
-        return "".join(chunks)
+            if chunks: messages.append((item.get("phase"), "".join(chunks)))
+        finals = [content for phase, content in messages if phase == "final_answer"]
+        if len(finals) == 1: return finals[0]
+        if len(finals) > 1: raise ProviderOutputError("Provider returned multiple final_answer messages")
+        if len(messages) == 1:
+            if messages[0][0] == "commentary": raise ProviderOutputError("Provider returned commentary without a final answer")
+            return messages[0][1]
+        if len(messages) > 1: raise ProviderOutputError("Provider returned multiple messages without a unique final_answer phase")
+        if isinstance(raw.get("output_text"), str): return raw["output_text"]
+        return ""
 
     def _checked_result(self, result: ModelResult) -> ModelResult:
         raw = result.raw
@@ -133,7 +143,11 @@ class Broker:
         checkpoint("after_response_saved")
         if reservation and (actual > reservation["reserved_usd"] or usage["input_tokens"] > reservation["reserved_input_tokens"]):
             self.store.event(None, "provider_usage_exceeded_reservation", {"request_id": request_id, "reserved_usd": reservation["reserved_usd"], "actual_usd": actual, "reserved_input_tokens": reservation["reserved_input_tokens"], "actual_input_tokens": usage["input_tokens"]})
-        return ModelResult(self._text(raw), raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual, request_id)
+        try: content = self._text(raw)
+        except ProviderOutputError:
+            self.store.mark_output_validation(request_id, "invalid")
+            raise
+        return ModelResult(content, raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual, request_id)
 
     def call(self, episode_id: str, request_key: str, instructions: str, input_text: str, max_output_tokens: int, *, timeout_seconds: float | None = None, response_format: dict | None = None) -> ModelResult:
         """Issue or recover a request. Reuse is allowed only for byte-identical payloads."""
@@ -147,7 +161,11 @@ class Broker:
         if existing:
             if existing["state"] == "completed":
                 raw = json.loads(existing["response_json"])
-                return self._checked_result(ModelResult(self._text(raw), raw, existing["provider_request_id"], existing["input_tokens"], existing["cached_input_tokens"], existing["output_tokens"], existing["actual_usd"], existing["request_id"]))
+                try: content = self._text(raw)
+                except ProviderOutputError:
+                    self.store.mark_output_validation(existing["request_id"], "invalid")
+                    raise
+                return self._checked_result(ModelResult(content, raw, existing["provider_request_id"], existing["input_tokens"], existing["cached_input_tokens"], existing["output_tokens"], existing["actual_usd"], existing["request_id"]))
             if existing["state"] == "unknown_outcome":
                 raise UnknownProviderOutcome(f"Request {request_key} has unknown outcome and must be manually resolved")
             if existing["state"] == "submitted":

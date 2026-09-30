@@ -119,6 +119,40 @@ class CoreTests(unittest.TestCase):
             row = store.conn.execute("SELECT state,actual_usd,incomplete_reason,output_validation FROM requests").fetchone()
             self.assertEqual(tuple(row), ("completed", 0.0, "content_filter", "invalid"))
 
+    def test_broker_uses_explicit_final_answer_not_commentary(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "action", 0)
+            raw = {"id": "multiphase", "status": "completed", "usage": {"input_tokens": 30, "output_tokens": 8},
+                   "output": [
+                       {"type": "message", "role": "assistant", "phase": "commentary", "content": [{"type": "output_text", "text": "I will produce JSON."}]},
+                       {"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": '{"procedures":[]}'}]},
+                   ]}
+            broker = Broker(config, store)
+            broker.client = type("Client", (), {"request": lambda self, payload: raw})()
+            first = broker.call("e", "k", "i", "x", 16)
+            second = broker.call("e", "k", "i", "x", 16)
+            self.assertEqual(first.text, '{"procedures":[]}')
+            self.assertEqual(second.text, first.text)
+            self.assertEqual(json.loads(store.conn.execute("SELECT response_json FROM requests").fetchone()[0]), raw)
+
+    def test_ambiguous_multiphase_output_is_rejected_after_billing(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "action", 0)
+            raw = {"id": "ambiguous", "status": "completed", "usage": {"input_tokens": 30, "output_tokens": 8},
+                   "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "first"}]},
+                              {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "second"}]}]}
+            broker = Broker(config, store)
+            class Client:
+                calls = 0
+                def request(self, payload):
+                    self.calls += 1
+                    return raw
+            broker.client = Client()
+            for _ in range(2):
+                with self.assertRaises(ProviderOutputError): broker.call("e", "k", "i", "x", 16)
+            self.assertEqual(broker.client.calls, 1)
+            self.assertEqual(store.conn.execute("SELECT state,output_validation FROM requests").fetchone()[:], ("completed", "invalid"))
+
     def test_received_response_with_inconsistent_usage_is_preserved_for_review(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
