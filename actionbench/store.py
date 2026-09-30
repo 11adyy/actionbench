@@ -265,14 +265,16 @@ class Store:
         self.conn.execute("UPDATE requests SET state='unknown_outcome',completed_at=? WHERE request_id=? AND state='submitted'", (now(), request_id))
         self.event(None, "unknown_provider_outcome", {"request_id": request_id, "detail": detail})
 
-    def preserve_unpriced_response(self, request_id: str, response: dict, detail: str) -> None:
+    def preserve_unpriced_response(self, request_id: str, response: object, detail: str) -> None:
         """Keep a received response even when its usage cannot be reconciled."""
+        fields = response if isinstance(response, dict) else {}
+        incomplete = fields.get("incomplete_details") if isinstance(fields.get("incomplete_details"), dict) else {}
         with self.tx() as conn:
             conn.execute("""UPDATE requests SET state='unknown_outcome',provider_request_id=?,response_json=?,
                            response_status=?,incomplete_reason=?,model_returned=?,completed_at=?
                            WHERE request_id=? AND state='submitted'""",
-                         (response.get("id"), json.dumps(response, sort_keys=True), response.get("status"),
-                          (response.get("incomplete_details") or {}).get("reason"), response.get("model"), now(), request_id))
+                         (fields.get("id"), json.dumps(response, sort_keys=True), fields.get("status"),
+                          incomplete.get("reason"), fields.get("model"), now(), request_id))
             conn.execute("INSERT INTO events(episode_id,kind,payload_json,created_at) VALUES(?,?,?,?)",
                          (None, "provider_usage_review", json.dumps({"request_id": request_id, "detail": detail}, sort_keys=True), now()))
 

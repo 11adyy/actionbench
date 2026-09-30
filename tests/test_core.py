@@ -119,6 +119,11 @@ class CoreTests(unittest.TestCase):
             saved = store.conn.execute("SELECT state,provider_request_id,response_json FROM requests").fetchone()
             self.assertEqual((saved["state"], saved["provider_request_id"]), ("unknown_outcome", "provider-known"))
             self.assertEqual(json.loads(saved["response_json"]), raw)
+            store.create_episode("e2", config.campaign, "t2", "f", "plain", 0)
+            broker.client.request = lambda payload: ["unexpected top-level response"]
+            with self.assertRaises(UnknownProviderOutcome): broker.call("e2", "k", "i", "x", 4)
+            saved_list = store.conn.execute("SELECT response_json FROM requests WHERE episode_id='e2'").fetchone()[0]
+            self.assertEqual(json.loads(saved_list), ["unexpected top-level response"])
 
     def test_known_policy_rejection_is_never_resent_on_resume(self):
         with tempfile.TemporaryDirectory() as d:
