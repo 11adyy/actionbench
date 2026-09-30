@@ -314,6 +314,8 @@ def _canary_natural_evaluations(config, store, manifest) -> list[dict]:
             existing = store.episode(episode)
             answer_path = config.artifact_root / "answers" / config.campaign / f"{episode}.txt"
             saved = store.evaluation(episode)
+            if saved and not existing["final_artifact"]:
+                raise InfrastructureError(f"Canary evaluation {episode} has no checkpointed answer")
             if existing["status"] == "completed" and saved:
                 score = json.loads(saved["score_json"])
             elif existing["status"] == "failed" and not existing["retryable"]:
@@ -331,8 +333,8 @@ def _canary_natural_evaluations(config, store, manifest) -> list[dict]:
                         answer_path.parent.mkdir(parents=True, exist_ok=True)
                         answer_path.write_text(answer)
                         store.save_answer(episode, str(answer_path))
-                    score = grade(task, answer)
-                    store.save_evaluation(episode, task.family, score)
+                    score = json.loads(saved["score_json"]) if saved else grade(task, answer)
+                    if not saved: store.save_evaluation(episode, task.family, score)
                     store.set_episode(episode, "completed", final_artifact=str(answer_path), retryable=False)
                 except UnknownProviderOutcome as exc:
                     store.set_episode(episode, "blocked", error=str(exc), retryable=False, failure_kind="provider_outcome_unknown")
@@ -493,6 +495,8 @@ def _validate_on_development(config, store, family: str, replica: int, revision:
         store.create_episode(episode, config.campaign, f"creation-dev:{family}:{kind}:{replica}:{revision}:{task.id}", family, kind, replica)
         existing = store.episode(episode)
         saved = store.evaluation(episode)
+        if saved and not existing["final_artifact"]:
+            raise InfrastructureError(f"Development evaluation {episode} has no checkpointed answer")
         if existing["status"] == "completed" and saved:
             score = json.loads(saved["score_json"])
             feedback.append({"task_id": task.id, "primary": score["primary"], "details": score})
@@ -512,8 +516,8 @@ def _validate_on_development(config, store, family: str, replica: int, revision:
                 answer = agent.run(episode, task.public_input.read_text(), kind, package if kind in {"skill", "skill_script"} else None, package if kind == "action" else None)
                 answer_path.parent.mkdir(parents=True, exist_ok=True)
                 answer_path.write_text(answer); store.save_answer(episode, str(answer_path))
-            score = grade(task, answer)
-            store.save_evaluation(episode, task.family, score)
+            score = json.loads(saved["score_json"]) if saved else grade(task, answer)
+            if not saved: store.save_evaluation(episode, task.family, score)
             store.set_episode(episode, "completed", retryable=False)
         except UnknownProviderOutcome as exc:
             store.set_episode(episode, "blocked", error=str(exc), retryable=False)
@@ -581,8 +585,11 @@ def _execute(config, store, manifest: Manifest) -> None:
             else:
                 answer = agent.run(row["episode_id"], task.public_input.read_text(), row["condition"], skill_dir, action_dir)
                 answer_path.write_text(answer); store.save_answer(row["episode_id"], str(answer_path))
-            score = grade(task, answer)
-            store.save_evaluation(row["episode_id"], task.family, score)
+            saved = store.evaluation(row["episode_id"])
+            if saved and not row["final_artifact"]:
+                raise InfrastructureError(f"Test evaluation {row['episode_id']} has no checkpointed answer")
+            score = json.loads(saved["score_json"]) if saved else grade(task, answer)
+            if not saved: store.save_evaluation(row["episode_id"], task.family, score)
             store.set_episode(row["episode_id"], "completed", final_artifact=str(answer_path), retryable=False)
         except UnknownProviderOutcome as exc:
             store.set_episode(row["episode_id"], "blocked", error=str(exc), retryable=False)

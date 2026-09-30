@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from actionbench.agent import AgentRunner
-from actionbench.commands import _bind_study, _creation_episode, _development_episode, _plan_test_episodes, _read_saved_answer, _validate_on_development, _verified_package
+from actionbench.commands import _bind_study, _creation_episode, _development_episode, _execute, _plan_test_episodes, _read_saved_answer, _validate_on_development, _verified_package
 from actionbench.cli import campaign_lock
 from actionbench.config import load_config
 from actionbench.design import plan_sample
@@ -594,6 +594,23 @@ class CoreTests(unittest.TestCase):
                 result = _validate_on_development(config, store, "f", 0, 0, [SimpleNamespace(id="d", public_input=public, family="f")], Agent(), "skill", root)
             self.assertEqual(result[0]["primary"], 1)
             self.assertEqual(grader.call_args.args[1], "checkpointed answer")
+
+    def test_saved_test_evaluation_is_reused_after_crash_before_completion(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); config, store = self.make(root)
+            public = root / "task.json"; public.write_text('{}')
+            task = SimpleNamespace(id="task", family="f", public_input=public)
+            episode = "e"
+            store.create_episode(episode, config.campaign, task.id, task.family, "plain", 0)
+            answer = config.artifact_root / "answers" / config.campaign / f"{episode}.txt"
+            answer.parent.mkdir(parents=True); answer.write_text("checkpointed answer")
+            store.save_answer(episode, str(answer))
+            store.save_evaluation(episode, "f", {"primary": 0.5})
+            with patch("actionbench.commands.grade", side_effect=AssertionError("grader reran")), \
+                 patch("actionbench.commands.AgentRunner.run", side_effect=AssertionError("agent reran")):
+                _execute(config, store, SimpleNamespace(test_tasks=(task,)))
+            self.assertEqual(store.episode(episode)["status"], "completed")
+            self.assertEqual(json.loads(store.evaluation(episode)["score_json"]), {"primary": 0.5})
 
     def test_answer_checkpoint_detects_tampering(self):
         with tempfile.TemporaryDirectory() as d:
