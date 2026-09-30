@@ -179,6 +179,14 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(report["validation_status"], "failed")
             self.assertIn("technical_or_unclassified_episode_failures", report["validation_reasons"])
 
+    def test_policy_rejection_is_reported_separately_from_method_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            store.create_episode("e", config.campaign, "task", "f", "action", 0)
+            store.set_episode("e", "failed", error="invalid_prompt", retryable=False, failure_kind="provider_rejected")
+            report = build_report(config, store)
+            self.assertIn("provider_policy_rejections_observed", report["validation_reasons"])
+
     def test_policy_preparation_includes_paired_skill_and_development(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d))

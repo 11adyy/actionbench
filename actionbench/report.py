@@ -157,6 +157,7 @@ def build_report(config, store) -> dict:
     missing_action = package_creation.get("action", {}).get("completed", 0) == 0
     technical_failure_kinds = {"unclassified_legacy", "unclassified_agent_error", "harness_error", "grader_error", "infrastructure_error"}
     technical_failures = sum(count for group in groups.values() for kind, count in group["failure_kinds"].items() if kind in technical_failure_kinds)
+    provider_rejections = sum(group["failure_kinds"].get("provider_rejected", 0) for group in groups.values())
     scored_action = sum(group["completed"] for name, group in groups.items() if name.endswith(":action"))
     invocation_count = sum(item["invocations"] for item in output["procedure_usage"] if item["condition"] == "action")
     reasons = []
@@ -164,6 +165,7 @@ def build_report(config, store) -> dict:
     if package_failures: reasons.append("procedure_package_creation_failed")
     if not scored_action: reasons.append("no_scored_action_episode")
     if technical_failures: reasons.append("technical_or_unclassified_episode_failures")
+    if provider_rejections: reasons.append("provider_policy_rejections_observed")
     if complete and not invocation_count: reasons.append("no_action_invocation_observed")
     output["execution_status"] = "terminal" if complete else ("blocked" if any(group["blocked"] for group in groups.values()) else "paused")
     output["validation_status"] = "failed" if missing_action or technical_failures else ("inconclusive" if reasons or not complete else "passed")
