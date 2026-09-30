@@ -8,7 +8,7 @@ from jsonschema.exceptions import ValidationError
 
 from .broker import Broker
 from .contracts import decision_format
-from .errors import ActionBenchError, BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, ProviderOutputError, UnknownProviderOutcome
+from .errors import AgentProtocolError, BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, GeneratedProgramError, InfrastructureError, ProviderOutputError, UnknownProviderOutcome
 from .runner import ActionRunner
 
 
@@ -49,33 +49,33 @@ class AgentRunner:
                 try:
                     decision = json.loads(result.text)
                 except json.JSONDecodeError as exc:
-                    raise ActionBenchError("Agent decision was not valid JSON") from exc
+                    raise AgentProtocolError("Agent decision was not valid JSON") from exc
                 if not isinstance(decision, dict) or set(decision) != {"type", "answer", "code", "procedure_id", "input_json"}:
-                    raise ActionBenchError("Agent decision did not match the required envelope")
+                    raise AgentProtocolError("Agent decision did not match the required envelope")
                 kind = decision["type"]
                 if kind == "final":
                     if any(decision[field] is not None for field in ("code", "procedure_id", "input_json")):
-                        raise ActionBenchError("Final decision must leave tool fields null")
+                        raise AgentProtocolError("Final decision must leave tool fields null")
                     if not isinstance(decision["answer"], str) or not decision["answer"].strip():
-                        raise ActionBenchError("Final decision needs a nonempty answer")
+                        raise AgentProtocolError("Final decision needs a nonempty answer")
                     if getattr(result, "request_id", None) and hasattr(self.broker, "store"):
                         self.broker.store.mark_output_validation(result.request_id, "accepted")
                     return decision["answer"]
                 if kind not in enabled:
-                    raise ActionBenchError(f"Tool {kind} is unavailable in {condition}")
+                    raise AgentProtocolError(f"Tool {kind} is unavailable in {condition}")
                 if decision["answer"] is not None:
-                    raise ActionBenchError("Tool decision must leave answer null")
+                    raise AgentProtocolError("Tool decision must leave answer null")
                 try:
                     input_data = json.loads(decision["input_json"] or "{}")
                 except (TypeError, json.JSONDecodeError) as exc:
-                    raise ActionBenchError("Tool input_json must encode an object") from exc
+                    raise AgentProtocolError("Tool input_json must encode an object") from exc
                 if not isinstance(input_data, dict):
-                    raise ActionBenchError("Tool input_json must encode an object")
+                    raise AgentProtocolError("Tool input_json must encode an object")
                 if kind in {"code", "llm_code"}:
                     if decision["procedure_id"] is not None:
-                        raise ActionBenchError("Code decision must leave procedure_id null")
+                        raise AgentProtocolError("Code decision must leave procedure_id null")
                     if not isinstance(decision["code"], str) or not decision["code"].strip():
-                        raise ActionBenchError(f"{kind} requires nonempty code")
+                        raise AgentProtocolError(f"{kind} requires nonempty code")
                     if getattr(result, "request_id", None) and hasattr(self.broker, "store"):
                         self.broker.store.mark_output_validation(result.request_id, "accepted")
                     accepted_decision = True
@@ -87,15 +87,15 @@ class AgentRunner:
                     continue
                 procedure_id = decision["procedure_id"]
                 if decision["code"] is not None:
-                    raise ActionBenchError("Procedure decision must leave code null")
+                    raise AgentProtocolError("Procedure decision must leave code null")
                 known = {item.get("id") for item in catalog}
                 if kind != "procedure" or procedure_id not in known or not package_dir:
-                    raise ActionBenchError(f"Unknown procedure: {procedure_id}")
+                    raise AgentProtocolError(f"Unknown procedure: {procedure_id}")
                 schema = next(item["input_schema"] for item in catalog if item["id"] == procedure_id)
                 try:
                     Draft202012Validator(schema).validate(input_data)
                 except ValidationError as exc:
-                    raise ActionBenchError(f"Procedure {procedure_id} input violates schema: {exc.message}") from exc
+                    raise AgentProtocolError(f"Procedure {procedure_id} input violates schema: {exc.message}") from exc
                 if getattr(result, "request_id", None) and hasattr(self.broker, "store"):
                     self.broker.store.mark_output_validation(result.request_id, "accepted")
                 accepted_decision = True
@@ -104,14 +104,19 @@ class AgentRunner:
                 context["observations"].append({"tool": "procedure", "procedure_id": procedure_id, "output": output})
             except (CampaignBudgetExceeded, BudgetExceeded, UnknownProviderOutcome, InfrastructureError, ConfigurationError):
                 raise
-            except (ActionBenchError, ProviderOutputError) as exc:
+            except (AgentProtocolError, GeneratedProgramError, ProviderOutputError) as exc:
                 repairs += 1
                 last_protocol_error = str(exc)
+                repair_kind = ("protocol" if isinstance(exc, AgentProtocolError) else
+                               "generated_program" if isinstance(exc, GeneratedProgramError) else "provider_output")
                 if hasattr(self.broker, "store"):
                     if result is not None and getattr(result, "request_id", None) and not accepted_decision:
                         self.broker.store.mark_output_validation(result.request_id, "invalid")
-                    self.broker.store.event(episode_id, "agent_protocol_repair", {"attempt": index, "error": str(exc)[:300]})
+                    self.broker.store.event(episode_id, "agent_repair", {"attempt": index, "kind": repair_kind, "error": str(exc)[:300]})
                 if repairs > 2:
-                    raise ActionBenchError(f"Agent protocol failed after two repairs: {exc}") from exc
-                context["protocol_feedback"].append({"attempt": index, "error": str(exc)[:300], "instruction": "Return the required decision object; choose only an available tool."})
-        raise ActionBenchError(f"Agent exhausted its call budget without a final answer; last protocol error: {last_protocol_error}" if last_protocol_error else "Agent exhausted its call budget without a final answer")
+                    raise type(exc)(f"Agent exhausted two recoveries after {repair_kind}: {exc}") from exc
+                instruction = ("Return the required decision object; choose only an available tool." if repair_kind == "protocol" else
+                               "Correct the generated program or choose a different tool." if repair_kind == "generated_program" else
+                               "The provider response was incomplete or refused; make a new concise decision.")
+                context["protocol_feedback"].append({"attempt": index, "kind": repair_kind, "error": str(exc)[:300], "instruction": instruction})
+        raise AgentProtocolError(f"Agent exhausted its call budget without a final answer; last repair error: {last_protocol_error}" if last_protocol_error else "Agent exhausted its call budget without a final answer")

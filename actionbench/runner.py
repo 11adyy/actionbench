@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .broker import Broker
 from .config import Config
-from .errors import ActionBenchError, InfrastructureError
+from .errors import ActionBenchError, GeneratedProgramError, InfrastructureError
 
 
 class ContainerRunner:
@@ -52,11 +52,11 @@ class ContainerRunner:
         pending = bytearray(); stderr = bytearray(); total_stdout = 0; output = None
         try:
             while selector.get_map():
-                if time.monotonic() >= deadline: raise ActionBenchError("Program exceeded wall-clock limit")
+                if time.monotonic() >= deadline: raise GeneratedProgramError("Program exceeded wall-clock limit")
                 for key, _ in selector.select(min(.25, max(0, deadline - time.monotonic()))):
                     if key.fileobj is proc.stdin:
                         try: written = os.write(proc.stdin.fileno(), outgoing)
-                        except BrokenPipeError as exc: raise ActionBenchError("Program closed its input pipe") from exc
+                        except BrokenPipeError as exc: raise GeneratedProgramError("Program closed its input pipe") from exc
                         del outgoing[:written]
                         if not outgoing: selector.unregister(proc.stdin)
                         continue
@@ -65,34 +65,35 @@ class ContainerRunner:
                         selector.unregister(key.fileobj); continue
                     if key.fileobj is proc.stderr:
                         stderr.extend(chunk)
-                        if len(stderr) > 65536: raise ActionBenchError("Program exceeded stderr limit")
+                        if len(stderr) > 65536: raise GeneratedProgramError("Program exceeded stderr limit")
                         continue
                     total_stdout += len(chunk)
-                    if total_stdout > 1_048_576: raise ActionBenchError("Program exceeded stdout limit")
+                    if total_stdout > 1_048_576: raise GeneratedProgramError("Program exceeded stdout limit")
                     pending.extend(chunk)
                     while b"\n" in pending:
                         line, _, remaining = pending.partition(b"\n"); pending = bytearray(remaining)
                         try: message = json.loads(line)
-                        except (UnicodeDecodeError, json.JSONDecodeError) as exc: raise ActionBenchError(f"Program emitted invalid JSONL: {line[:200]!r}") from exc
-                        if not isinstance(message, dict): raise ActionBenchError("Program message must be a JSON object")
+                        except (UnicodeDecodeError, json.JSONDecodeError) as exc: raise GeneratedProgramError(f"Program emitted invalid JSONL: {line[:200]!r}") from exc
+                        if not isinstance(message, dict): raise GeneratedProgramError("Program message must be a JSON object")
                         if message.get("kind") == "llm_request":
-                            if not allow_llm: raise ActionBenchError("This condition cannot request an LLM from generated code")
+                            if not allow_llm: raise GeneratedProgramError("This condition cannot request an LLM from generated code")
                             step = str(message.get("step", ""))
-                            if not step: raise ActionBenchError("LLM request is missing a stable step id")
+                            if not step: raise GeneratedProgramError("LLM request is missing a stable step id")
                             result = self.broker.call(episode_id, f"{run_id}:{step}", str(message.get("instructions", "")), str(message.get("prompt", "")), int(message.get("max_output_tokens", 0)), timeout_seconds=max(.001, deadline-time.monotonic()))
-                            if time.monotonic() >= deadline: raise ActionBenchError("Program exceeded wall-clock limit")
+                            if time.monotonic() >= deadline: raise GeneratedProgramError("Program exceeded wall-clock limit")
                             outgoing.extend((json.dumps({"kind": "llm_response", "text": result.text}) + "\n").encode())
                             try: selector.get_key(proc.stdin)
                             except KeyError: selector.register(proc.stdin, selectors.EVENT_WRITE)
                         elif message.get("kind") == "result":
-                            if output is not None or not isinstance(message.get("output"), dict): raise ActionBenchError("Program emitted duplicate or invalid result")
+                            if output is not None or not isinstance(message.get("output"), dict): raise GeneratedProgramError("Program emitted duplicate or invalid result")
                             output = message["output"]
-                        else: raise ActionBenchError(f"Program emitted unknown message kind: {message.get('kind')}")
-            if pending: raise ActionBenchError("Program emitted an unterminated JSONL message")
-            proc.wait(timeout=max(.01, deadline - time.monotonic()))
+                        else: raise GeneratedProgramError(f"Program emitted unknown message kind: {message.get('kind')}")
+            if pending: raise GeneratedProgramError("Program emitted an unterminated JSONL message")
+            try: proc.wait(timeout=max(.01, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired as exc: raise GeneratedProgramError("Program exceeded wall-clock limit") from exc
             if proc.returncode == 125: raise InfrastructureError(f"Docker failed: {stderr[:1000].decode(errors='replace')}")
-            if proc.returncode: raise ActionBenchError(stderr[:1000].decode(errors="replace"))
-            if output is None: raise ActionBenchError("Program terminated without result")
+            if proc.returncode: raise GeneratedProgramError(stderr[:1000].decode(errors="replace"))
+            if output is None: raise GeneratedProgramError("Program terminated without result")
             return output
         finally:
             selector.close()
@@ -117,7 +118,7 @@ class ActionRunner:
     def run(self, episode_id: str, action_dir: Path, invocation_key: str, input_data: dict, *, allow_llm: bool) -> dict:
         manifest = json.loads((action_dir / "procedure.json").read_text())
         action_id, command = manifest.get("id"), manifest.get("command")
-        if not isinstance(action_id, str) or not isinstance(command, list): raise ActionBenchError("Invalid frozen action manifest")
+        if not isinstance(action_id, str) or not isinstance(command, list): raise InfrastructureError("Invalid frozen action manifest")
         code_hash = hashlib.sha256((action_dir / "main.py").read_bytes()).hexdigest()
         input_hash = hashlib.sha256(json.dumps(input_data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         run_id = hashlib.sha256(f"{episode_id}|{invocation_key}|{action_id}|{code_hash}|{input_hash}".encode()).hexdigest()[:32]
@@ -137,7 +138,7 @@ class ActionRunner:
             raise
 
     def run_ephemeral_llm_program(self, episode_id: str, invocation_key: str, code: str, input_data: dict) -> dict:
-        if "from action_sdk import ActionContext" not in code: raise ActionBenchError("Programmatic LLM code must use ActionContext")
+        if "from action_sdk import ActionContext" not in code: raise GeneratedProgramError("Programmatic LLM code must use ActionContext")
         code_hash = hashlib.sha256(code.encode()).hexdigest()[:16]
         root = self.config.artifact_root / "ephemeral" / episode_id / f"{invocation_key}-{code_hash}"
         root.mkdir(parents=True, exist_ok=True)
@@ -148,7 +149,7 @@ class ActionRunner:
         return self.run(episode_id, root, invocation_key, input_data, allow_llm=True)
 
     def run_plain_program(self, episode_id: str, invocation_key: str, code: str, input_data: dict) -> dict:
-        if "llm_request" in code or "action_sdk" in code: raise ActionBenchError("Plain code tool cannot access the LLM protocol")
+        if "llm_request" in code or "action_sdk" in code: raise GeneratedProgramError("Plain code tool cannot access the LLM protocol")
         code_hash = hashlib.sha256(code.encode()).hexdigest()
         input_hash = hashlib.sha256(json.dumps(input_data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         run_id = hashlib.sha256(f"{episode_id}|{invocation_key}|plain|{code_hash}|{input_hash}".encode()).hexdigest()[:32]

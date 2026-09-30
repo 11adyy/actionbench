@@ -28,3 +28,11 @@ class UnknownProviderOutcome(ActionBenchError):
 
 class ProviderOutputError(ActionBenchError):
     """Known, billed provider response that cannot be consumed as output."""
+
+
+class AgentProtocolError(ActionBenchError):
+    """The model's coordinator decision violates the frozen decision contract."""
+
+
+class GeneratedProgramError(ActionBenchError):
+    """A model-written program failed under a functioning execution harness."""

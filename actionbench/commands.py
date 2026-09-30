@@ -17,7 +17,7 @@ from jsonschema.exceptions import ValidationError
 from .agent import AgentRunner
 from .broker import Broker
 from .contracts import decision_format
-from .errors import ActionBenchError, BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome
+from .errors import ActionBenchError, AgentProtocolError, BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, GeneratedProgramError, InfrastructureError, ProviderOutputError, UnknownProviderOutcome
 from .grader import grade
 from .manifest import Manifest, load_manifest, verify_data
 from .runner import ActionRunner, ContainerRunner
@@ -344,7 +344,7 @@ def _canary_natural_evaluations(config, store, manifest) -> list[dict]:
                     store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind="episode_budget_exhausted")
                     score = None
                 except ActionBenchError as exc:
-                    store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind="agent_error")
+                    store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind=_agent_failure_kind(exc))
                     score = None
                 except Exception as exc:
                     store.set_episode(episode, "failed", error=str(exc), retryable=True)
@@ -388,6 +388,13 @@ def _id(*parts: object) -> str:
     return hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()[:32]
 
 
+def _agent_failure_kind(exc: ActionBenchError) -> str:
+    if isinstance(exc, AgentProtocolError): return "protocol_error"
+    if isinstance(exc, GeneratedProgramError): return "generated_program_failed"
+    if isinstance(exc, ProviderOutputError): return "provider_output_invalid"
+    return "unclassified_agent_error"
+
+
 def _read_saved_answer(row, expected_path: Path) -> str:
     if Path(row["final_artifact"]).resolve() != expected_path.resolve() or not expected_path.is_file():
         raise InfrastructureError(f"Saved answer path missing or changed: {expected_path}")
@@ -429,6 +436,7 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                 store.set_episode(episode, "running")
                 started = time.monotonic()
                 feedback: list[dict] = []
+                last_creation_failure_kind = "package_creation_failed"
                 try:
                     final_path = None; final_hash = None; best_score = -1.0; last_path = None
                     base_skill_md = None
@@ -442,6 +450,7 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                             package_hash = create_package(broker, episode, family, replica, kind, target, feedback, base_skill_md, revision=revision, previous_package=last_path)
                         except (CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome): raise
                         except ActionBenchError as exc:
+                            last_creation_failure_kind = "creation_budget_exhausted" if isinstance(exc, BudgetExceeded) else "package_creation_failed"
                             feedback = [{"generation_error": str(exc)}]
                             store.event(episode, "package_revision_rejected", {"kind": kind, "revision": revision, "error": str(exc)[:1000]})
                             continue
@@ -462,7 +471,7 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                 except (ConfigurationError, InfrastructureError, CampaignBudgetExceeded) as exc:
                     store.set_episode(episode, "queued", error=str(exc)); raise
                 except ActionBenchError as exc:
-                    store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind="package_creation_failed")
+                    store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind=last_creation_failure_kind)
                     continue
                 except Exception as exc:
                     store.set_episode(episode, "failed", error=str(exc), retryable=True); raise
@@ -514,7 +523,7 @@ def _validate_on_development(config, store, family: str, replica: int, revision:
             store.set_episode(episode, "queued", error=str(exc))
             raise
         except ActionBenchError as exc:
-            store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind="agent_error")
+            store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind=_agent_failure_kind(exc))
             feedback.append({"task_id": task.id, "primary": 0.0, "error": str(exc)})
             continue
         except Exception as exc:
@@ -582,7 +591,7 @@ def _execute(config, store, manifest: Manifest) -> None:
         except BudgetExceeded as exc:
             store.set_episode(row["episode_id"], "failed", error=str(exc), retryable=False, failure_kind="episode_budget_exhausted")
         except ActionBenchError as exc:
-            store.set_episode(row["episode_id"], "failed", error=str(exc), retryable=False, failure_kind="agent_error")
+            store.set_episode(row["episode_id"], "failed", error=str(exc), retryable=False, failure_kind=_agent_failure_kind(exc))
         except Exception as exc:
             store.set_episode(row["episode_id"], "failed", error=str(exc), retryable=True)
         finally:
