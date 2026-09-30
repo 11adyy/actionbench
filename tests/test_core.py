@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from actionbench.agent import AgentRunner
-from actionbench.commands import _agent_failure_kind, _bind_study, _creation_episode, _development_episode, _execute, _plan_test_episodes, _probe_package_procedures, _read_saved_answer, _validate_on_development, _verified_package
+from actionbench.commands import _agent_failure_kind, _bind_study, _create_packages, _creation_episode, _development_episode, _execute, _plan_test_episodes, _probe_package_procedures, _read_saved_answer, _validate_on_development, _verified_package
 from actionbench.cli import campaign_lock
 from actionbench.config import load_config
 from actionbench.design import plan_sample
@@ -15,12 +15,39 @@ from actionbench.errors import ActionBenchError, BudgetExceeded, GeneratedProgra
 from actionbench.grader import grade
 from actionbench.report import build_report
 from actionbench.runner import ActionRunner, ContainerRunner
-from actionbench.skill_creator import create_package, _development_prompt_examples, _validate_procedure
+from actionbench.skill_creator import create_package, _development_prompt_examples, _package_hash, _validate_procedure
 from actionbench.store import Store
 from actionbench.statistics import crossed_paired_bootstrap
 
 
 class CoreTests(unittest.TestCase):
+    def test_later_provider_rejection_keeps_earlier_valid_package(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); config, store = self.make(root)
+            public = root / "dev.json"; public.write_text('{"prompt":"solve"}')
+            task = SimpleNamespace(id="dev", split="development", public_input=public)
+            family = SimpleNamespace(id="family", tasks=(task,))
+            manifest = SimpleNamespace(families=(family,), development_tasks=(task,))
+            def generate(_broker, _episode, _family, _replica, kind, target, _feedback, base_skill_md, *, revision, previous_package):
+                if kind == "skill_script" and revision == 1:
+                    raise ProviderRejectedError("invalid_prompt")
+                target.mkdir(parents=True)
+                (target / "SKILL.md").write_text(base_skill_md or "skill")
+                return _package_hash(target)
+            def assess(_config, _store, _family, _replica, _revision, _tasks, _agent, kind, _target):
+                return [{"task_id": "dev", "primary": 0.5 if kind == "skill_script" else 1.0}]
+            with patch("actionbench.commands.create_package", side_effect=generate), \
+                 patch("actionbench.commands._probe_package_procedures", return_value=[]), \
+                 patch("actionbench.commands._validate_on_development", side_effect=assess):
+                _create_packages(config, store, manifest)
+            package = store.package(config.campaign, "family", 0, "skill_script")
+            self.assertEqual(Path(package["path"]).name, "v0")
+            self.assertEqual(store.episode(_creation_episode(config, "family", 0, "skill_script"))["status"], "completed")
+            events = [json.loads(row[0]) for row in store.conn.execute(
+                "SELECT payload_json FROM events WHERE episode_id=? AND kind='package_revision_rejected'",
+                (_creation_episode(config, "family", 0, "skill_script"),))]
+            self.assertTrue(any(event.get("kept_previous_valid_revision") for event in events))
+
     def test_episode_budget_failure_keeps_its_own_kind(self):
         self.assertEqual(_agent_failure_kind(BudgetExceeded("Episode call limit")), "episode_budget_exhausted")
 

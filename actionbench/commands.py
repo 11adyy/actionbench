@@ -512,7 +512,13 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                         target = base / family.id / str(replica) / kind / f"v{revision}"
                         try:
                             package_hash = create_package(broker, episode, family, replica, kind, target, feedback, base_skill_md, revision=revision, previous_package=last_path)
-                        except (CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome, ProviderRejectedError): raise
+                        except ProviderRejectedError as exc:
+                            store.event(episode, "package_revision_rejected", {"kind": kind, "revision": revision,
+                                                                                 "error": str(exc)[:1000], "kept_previous_valid_revision": final_path is not None})
+                            if final_path is not None:
+                                break
+                            raise
+                        except (CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome): raise
                         except ActionBenchError as exc:
                             last_creation_failure_kind = "creation_budget_exhausted" if isinstance(exc, BudgetExceeded) else "package_creation_failed"
                             feedback = [{"generation_error": str(exc)}]
