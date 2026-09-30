@@ -89,34 +89,43 @@ def build_report(config, store) -> dict:
             salt = int(hashlib.sha256(f"{config.campaign}|{family}|{baseline}".encode()).hexdigest()[:8], 16)
             quality_cells = {(task, replica): (action[0], other[0]) for task, pairs in tasks.items() for replica, (action, other) in pairs}
             cost_cells = {(task, replica): (action[1], other[1]) for task, pairs in tasks.items() for replica, (action, other) in pairs}
-            mean_runtime_delta = sum(action[1] - other[1] for pairs in tasks.values() for _, (action, other) in pairs) / sum(len(pairs) for pairs in tasks.values())
             baseline_creation = "skill_script" if baseline == "skill_script" else None
+            uses = config.analysis.amortization_uses
+            total_cost_cells = {(task, replica): (
+                action[1] + creation_costs[(family, "action", replica)] / uses,
+                other[1] + (creation_costs[(family, baseline_creation, replica)] / uses if baseline_creation else 0.0))
+                for task, pairs in tasks.items() for replica, (action, other) in pairs}
+            mean_runtime_delta = sum(action[1] - other[1] for pairs in tasks.values() for _, (action, other) in pairs) / sum(len(pairs) for pairs in tasks.values())
             per_replica_creation = [creation_costs[(family, "action", replica)] - (creation_costs[(family, baseline_creation, replica)] if baseline_creation else 0.0) for replica in replicas[family]]
             mean_creation_delta = sum(per_replica_creation) / len(per_replica_creation) if per_replica_creation else 0.0
             break_even = None if mean_runtime_delta >= 0 else max(0, int(math.ceil(mean_creation_delta / -mean_runtime_delta)))
             quality = crossed_paired_bootstrap(quality_cells, salt)
             usd = crossed_paired_bootstrap(cost_cells, salt + 1)
+            total_usd = crossed_paired_bootstrap(total_cost_cells, salt + 2)
             action_available = all((family, replica, "action") in available_packages for replica in replicas[family])
             baseline_available = baseline != "skill_script" or all((family, replica, "skill_script") in available_packages for replica in replicas[family])
             interpretable = action_available and baseline_available
             inferential = complete and interpretable and quality["n_tasks"] >= 10 and quality["n_replicas"] >= 3 and not excluded[family]
             if not inferential:
-                quality["ci95"] = None; usd["ci95"] = None
+                quality["ci95"] = None; usd["ci95"] = None; total_usd["ci95"] = None
             reason = None if interpretable else ("action_package_unavailable" if not action_available else "baseline_package_unavailable")
             margin = config.analysis.quality_noninferiority_margin
             supports_noninferiority = bool(inferential and quality["ci95"][0] > -margin)
             supports_runtime_saving = bool(inferential and usd["ci95"][1] < 0)
+            supports_total_saving = bool(inferential and total_usd["ci95"][1] < 0)
             comparisons[f"{family}:action_minus_{baseline}"] = {
                 "quality": quality,
                 "usd": usd,
+                "total_usd_at_declared_uses": total_usd if interpretable else None,
                 "inferential_interval_available": inferential,
                 "interpretable": interpretable,
                 "invalid_reason": reason,
                 "incomplete_pairs_excluded": excluded[family],
-                "observed_cost_saving_at_nonnegative_quality": (supports_noninferiority and supports_runtime_saving) if inferential else None,
+                "supports_total_cost_saving_with_quality_noninferiority": (supports_noninferiority and supports_total_saving) if inferential else None,
                 "noninferiority_margin": margin,
                 "supports_quality_noninferiority": supports_noninferiority if inferential else None,
                 "supports_runtime_cost_saving": supports_runtime_saving if inferential else None,
+                "supports_total_cost_saving": supports_total_saving if inferential else None,
                 "amortization": {"mean_creation_delta_usd_per_replica": mean_creation_delta, "mean_runtime_delta_usd_per_episode": mean_runtime_delta, "break_even_uses_per_package": break_even,
                                  "declared_uses": config.analysis.amortization_uses,
                                  "mean_total_delta_at_declared_uses": mean_creation_delta + config.analysis.amortization_uses * mean_runtime_delta} if interpretable else None,

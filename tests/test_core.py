@@ -138,7 +138,7 @@ class CoreTests(unittest.TestCase):
             comparison = report["paired_comparisons"]["f:action_minus_skill"]
             self.assertEqual(report["scientific_status"], "diagnostic_only")
             self.assertFalse(comparison["interpretable"])
-            self.assertIsNone(comparison["observed_cost_saving_at_nonnegative_quality"])
+            self.assertIsNone(comparison["supports_total_cost_saving_with_quality_noninferiority"])
             self.assertIsNone(comparison["amortization"])
             store.conn.execute("UPDATE campaigns SET status='frozen' WHERE campaign=?", (config.campaign,))
             with self.assertRaises(ActionBenchError): plan_sample(config, store, "f", "skill", .1, .1)
@@ -166,7 +166,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(report["scientific_status"], "exploratory")
             self.assertTrue(comparison["interpretable"])
             self.assertEqual(comparison["quality"]["mean_delta"], -1)
-            self.assertFalse(comparison["observed_cost_saving_at_nonnegative_quality"])
+            self.assertFalse(comparison["supports_total_cost_saving_with_quality_noninferiority"])
 
     def test_resume_includes_retryable_failures(self):
         with tempfile.TemporaryDirectory() as d:
