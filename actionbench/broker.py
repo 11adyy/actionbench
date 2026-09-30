@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import Config, api_key
-from .errors import BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome
+from .errors import BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, ProviderOutputError, UnknownProviderOutcome
 from .store import Store
 
 
@@ -98,6 +98,18 @@ class Broker:
                     chunks.append(content.get("text", ""))
         return "".join(chunks)
 
+    @staticmethod
+    def _checked_result(result: ModelResult) -> ModelResult:
+        raw = result.raw
+        status = raw.get("status")
+        if status not in (None, "completed"):
+            reason = (raw.get("incomplete_details") or {}).get("reason")
+            raise ProviderOutputError(f"Provider response {result.provider_request_id} has status {status}: {reason or 'no reason'}")
+        if any(content.get("type") == "refusal" for item in raw.get("output", [])
+               if isinstance(item, dict) for content in item.get("content", []) if isinstance(content, dict)):
+            raise ProviderOutputError(f"Provider response {result.provider_request_id} contains a refusal")
+        return result
+
     def _complete(self, request_id: str, raw: dict) -> ModelResult:
         try:
             usage = self._usage(raw)
@@ -111,17 +123,19 @@ class Broker:
             self.store.event(None, "provider_usage_exceeded_reservation", {"request_id": request_id, "reserved_usd": reservation["reserved_usd"], "actual_usd": actual, "reserved_input_tokens": reservation["reserved_input_tokens"], "actual_input_tokens": usage["input_tokens"]})
         return ModelResult(self._text(raw), raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual)
 
-    def call(self, episode_id: str, request_key: str, instructions: str, input_text: str, max_output_tokens: int, *, timeout_seconds: float | None = None) -> ModelResult:
+    def call(self, episode_id: str, request_key: str, instructions: str, input_text: str, max_output_tokens: int, *, timeout_seconds: float | None = None, response_format: dict | None = None) -> ModelResult:
         """Issue or recover a request. Reuse is allowed only for byte-identical payloads."""
         payload = {"model": self.config.provider.model, "instructions": instructions, "input": input_text, "max_output_tokens": max_output_tokens, "store": False}
         if self.config.provider.reasoning_effort is not None:
             payload["reasoning"] = {"effort": self.config.provider.reasoning_effort}
+        if response_format is not None:
+            payload["text"] = {"format": response_format}
         request_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         existing = self.store.request_for(episode_id, request_key, request_hash)
         if existing:
             if existing["state"] == "completed":
                 raw = json.loads(existing["response_json"])
-                return ModelResult(self._text(raw), raw, existing["provider_request_id"], existing["input_tokens"], existing["cached_input_tokens"], existing["output_tokens"], existing["actual_usd"])
+                return self._checked_result(ModelResult(self._text(raw), raw, existing["provider_request_id"], existing["input_tokens"], existing["cached_input_tokens"], existing["output_tokens"], existing["actual_usd"]))
             if existing["state"] == "unknown_outcome":
                 raise UnknownProviderOutcome(f"Request {request_key} has unknown outcome and must be manually resolved")
             if existing["state"] == "submitted":
@@ -144,14 +158,14 @@ class Broker:
                     self.store.unknown_request(request_id, str(exc)); raise
                 except (ConfigurationError, InfrastructureError) as exc:
                     self.store.reject_request(request_id, str(exc)); raise
-                return self._complete(request_id, raw)
+                return self._checked_result(self._complete(request_id, raw))
             raise UnknownProviderOutcome(f"Request {request_key} has unsupported stored state {existing['state']}")
         if max_output_tokens < 1 or max_output_tokens > self.config.budget.max_output_tokens:
             raise BudgetExceeded("Requested output tokens exceed the campaign limit")
         # Byte-level upper bound for byte-oriented model tokenizers, plus a
         # fixed allowance for provider message framing. Unknown tokenizers
         # still require an explicit compatible-provider claim in the paper.
-        estimated_input = len(instructions.encode()) + len(input_text.encode()) + 1024
+        estimated_input = len(instructions.encode()) + len(input_text.encode()) + len(json.dumps(response_format).encode() if response_format is not None else b"") + 1024
         call_count, used_input, used_output = self.store.episode_limits(episode_id)
         if call_count >= self.config.budget.max_llm_calls:
             raise BudgetExceeded("Episode call limit would be exceeded")
@@ -173,4 +187,4 @@ class Broker:
         except (ConfigurationError, InfrastructureError) as exc:
             self.store.reject_request(request_id, str(exc))
             raise
-        return self._complete(request_id, raw)
+        return self._checked_result(self._complete(request_id, raw))

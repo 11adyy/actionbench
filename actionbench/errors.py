@@ -24,3 +24,7 @@ class ResumeConflict(ActionBenchError):
 
 class UnknownProviderOutcome(ActionBenchError):
     pass
+
+
+class ProviderOutputError(ActionBenchError):
+    """Known, billed provider response that cannot be consumed as output."""

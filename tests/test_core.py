@@ -11,11 +11,11 @@ from actionbench.cli import campaign_lock
 from actionbench.config import load_config
 from actionbench.design import plan_sample
 from actionbench.broker import Broker
-from actionbench.errors import ActionBenchError, InfrastructureError, UnknownProviderOutcome
+from actionbench.errors import ActionBenchError, InfrastructureError, ProviderOutputError, UnknownProviderOutcome
 from actionbench.grader import grade
 from actionbench.report import build_report
 from actionbench.runner import ActionRunner, ContainerRunner
-from actionbench.skill_creator import create_package
+from actionbench.skill_creator import create_package, _validate_procedure
 from actionbench.store import Store
 from actionbench.statistics import crossed_paired_bootstrap
 
@@ -48,6 +48,60 @@ class CoreTests(unittest.TestCase):
             store.reserve_request("r-a", "e", "step", "hash-a", {"input": "A"}, .1, 10)
             self.assertIsNotNone(store.request_for("e", "step", "hash-a"))
             self.assertIsNone(store.request_for("e", "step", "hash-b"))
+
+    def test_structured_schema_is_part_of_request_identity(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
+            broker = Broker(config, store)
+            class Client:
+                calls = 0
+                def request(self, payload):
+                    self.calls += 1
+                    return {"id": f"p-{self.calls}", "output_text": "{}", "usage": {"input_tokens": 20, "output_tokens": 1}}
+            broker.client = Client()
+            one = {"type": "json_schema", "name": "v1", "strict": True, "schema": {"type": "object"}}
+            two = {"type": "json_schema", "name": "v2", "strict": True, "schema": {"type": "object"}}
+            broker.call("e", "same", "i", "x", 4, response_format=one)
+            broker.call("e", "same", "i", "x", 4, response_format=one)
+            broker.call("e", "same", "i", "x", 4, response_format=two)
+            self.assertEqual(broker.client.calls, 2)
+            self.assertEqual(store.conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0], 2)
+
+    def test_incomplete_provider_output_is_billed_once_and_not_consumed(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
+            replace = __import__("dataclasses").replace
+            config = replace(config, provider=replace(config.provider, input_usd_per_million=1, output_usd_per_million=1))
+            broker = Broker(config, store)
+            class Client:
+                calls = 0
+                def request(self, payload):
+                    self.calls += 1
+                    return {"id": "p", "status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"},
+                            "output_text": "{", "usage": {"input_tokens": 20, "output_tokens": 4}}
+            broker.client = Client()
+            for _ in range(2):
+                with self.assertRaises(ProviderOutputError): broker.call("e", "k", "i", "x", 4)
+            self.assertEqual(broker.client.calls, 1)
+            self.assertEqual(store.conn.execute("SELECT state FROM requests").fetchone()[0], "completed")
+            self.assertGreater(store.campaign_spend(config.campaign), 0)
+
+    def test_generated_procedure_underscores_and_paired_skill(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); destination = root / "package"
+            code = "import json,sys\nfrom action_sdk import ActionContext\nctx=ActionContext(json.loads(sys.stdin.readline())['input'])\nctx.emit({'ok': True})\n"
+            procedure = {"id": "extract_function_contract", "description": "Extract a contract",
+                         "input_schema_json": '{"type":"object"}', "code": code}
+            self.assertEqual(_validate_procedure(procedure, "action"), {"type": "object"})
+            for bad in ("../escape", "bad/name", "", "_hidden"):
+                with self.assertRaises(ActionBenchError): _validate_procedure({**procedure, "id": bad}, "action")
+            class Creator:
+                def call(self, *_args, **_kwargs):
+                    return SimpleNamespace(text=json.dumps({"procedures": [procedure]}))
+            family = SimpleNamespace(id="f", creator_brief="brief", demonstrations=(), tasks=())
+            create_package(Creator(), "e", family, 0, "action", destination, base_skill_md="original skill")
+            self.assertEqual((destination / "SKILL.md").read_text(), "original skill")
+            self.assertEqual(json.loads((destination / "procedures" / procedure["id"] / "procedure.json").read_text())["command"], ["python", "/action/main.py"])
 
     def test_report_keeps_failed_episodes_in_denominator(self):
         with tempfile.TemporaryDirectory() as d:
@@ -222,9 +276,9 @@ class CoreTests(unittest.TestCase):
             (procedure / "procedure.json").write_text(json.dumps({"id": "extract", "description": "Extract named entities.", "input_schema": {"type": "object", "required": ["text"]}, "command": ["python", "/action/main.py"]}))
             class CaptureBroker:
                 config = SimpleNamespace(budget=SimpleNamespace(max_llm_calls=1, max_output_tokens=64))
-                def call(self, *_args):
+                def call(self, *_args, **_kwargs):
                     self.context = json.loads(_args[3])
-                    return SimpleNamespace(text='{"type":"final","answer":"done"}')
+                    return SimpleNamespace(text='{"type":"final","answer":"done","code":null,"procedure_id":null,"input_json":null}')
             broker = CaptureBroker()
             self.assertEqual(AgentRunner(broker, None).run("e", "task", "action", None, package), "done")
             self.assertEqual(broker.context["skill"], "Follow the exact answer contract.")
@@ -239,7 +293,7 @@ class CoreTests(unittest.TestCase):
                 (directory / "procedure.json").write_text(json.dumps({"id": procedure_id, "description": procedure_id, "input_schema": {"type": "object"}, "command": ["python", "/action/main.py"]}))
             class BrokerCapture:
                 config = SimpleNamespace(budget=SimpleNamespace(max_llm_calls=1, max_output_tokens=64))
-                def call(self, *_args): self.context = json.loads(_args[3]); return SimpleNamespace(text='{"type":"final","answer":"ok"}')
+                def call(self, *_args, **_kwargs): self.context = json.loads(_args[3]); return SimpleNamespace(text='{"type":"final","answer":"ok","code":null,"procedure_id":null,"input_json":null}')
             broker = BrokerCapture(); AgentRunner(broker, None).run("e", "task", "action", None, root)
             self.assertEqual([item["id"] for item in broker.context["procedures"]], ["alpha", "zeta"])
 
@@ -264,7 +318,7 @@ class CoreTests(unittest.TestCase):
             family = SimpleNamespace(id="f", creator_brief="brief", demonstrations=())
             class Creator:
                 calls = 0
-                def call(self, *_args):
+                def call(self, *_args, **_kwargs):
                     self.calls += 1
                     return SimpleNamespace(text=json.dumps({"skill_md": "instructions"}))
             creator = Creator(); destination = root / "packages" / "v0"
@@ -392,8 +446,8 @@ class CoreTests(unittest.TestCase):
     def test_agent_json_array_is_terminal_protocol_failure(self):
         class BrokerArray:
             config = SimpleNamespace(budget=SimpleNamespace(max_llm_calls=1, max_output_tokens=64))
-            def call(self, *_args): return SimpleNamespace(text="[]")
-        with self.assertRaisesRegex(ActionBenchError, "JSON object"):
+            def call(self, *_args, **_kwargs): return SimpleNamespace(text="[]")
+        with self.assertRaisesRegex(ActionBenchError, "required envelope"):
             AgentRunner(BrokerArray(), None).run("e", "task", "plain", None, None)
 
     def test_grader_has_a_writable_temporary_filesystem(self):
@@ -418,6 +472,7 @@ class CoreTests(unittest.TestCase):
                 store.complete_request(f"request-{episode}", None, {}, {}, amount)
             add_cost("create-skill", "creation:f:skill:0", "skill", 5)
             add_cost("create-action", "creation:f:action:0", "action", 7)
+            store.save_package(config.campaign, "f", 0, "action", "action-hash", "/tmp/action", "create-action")
             for condition in ("skill", "action"):
                 add_cost(f"test-{condition}", "task", condition, 0)
                 store.save_evaluation(f"test-{condition}", "f", {"primary": 1})
@@ -427,6 +482,11 @@ class CoreTests(unittest.TestCase):
     def test_pilot_sample_planning_uses_paired_task_and_package_variance(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d))
+            for replica in range(2):
+                episode = f"creation-{replica}"
+                store.create_episode(episode, config.campaign, f"creation:f:action:{replica}", "f", "action", replica)
+                store.set_episode(episode, "completed", retryable=False)
+                store.save_package(config.campaign, "f", replica, "action", f"hash-{replica}", f"/tmp/action-{replica}", episode)
             for task in range(4):
                 for replica in range(2):
                     for condition, score in (("skill", 0.2), ("action", 0.3 + task * .05 + replica * .1)):
@@ -434,6 +494,9 @@ class CoreTests(unittest.TestCase):
                         store.create_episode(episode, config.campaign, f"task-{task}", "f", condition, replica)
                         store.save_evaluation(episode, "f", {"primary": score})
                         store.set_episode(episode, "completed", retryable=False)
+            store.create_action_run("run-1", "0-0-action", "probe", "procedure", "input", "/tmp/workspace")
+            store.set_action_run("run-1", "completed", output={"ok": True})
+            store.bind_study(config.campaign, "manifest", "harness", {"image": "digest"}, 16)
             store.conn.execute("UPDATE campaigns SET status='frozen' WHERE campaign=?", (config.campaign,))
             plan = plan_sample(config, store, "f", "skill", .1, .1)
             self.assertEqual(plan["pilot_tasks"], 4)
