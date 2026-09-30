@@ -10,6 +10,7 @@ from typing import Iterator
 
 from .config import Config
 from .errors import ResumeConflict
+from .faults import checkpoint
 
 
 def now() -> str:
@@ -193,6 +194,7 @@ class Store:
     def save_answer(self, episode_id: str, path: str) -> None:
         digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         self.conn.execute("UPDATE episodes SET final_artifact=?,final_artifact_sha256=?,updated_at=? WHERE episode_id=?", (path, digest, now(), episode_id))
+        checkpoint("after_answer_saved")
 
     def add_episode_duration(self, episode_id: str, seconds: float) -> None:
         self.conn.execute("UPDATE episodes SET duration_seconds=duration_seconds+? WHERE episode_id=?", (max(0, seconds), episode_id))
@@ -307,6 +309,7 @@ class Store:
 
     def save_evaluation(self, episode_id: str, grader: str, score: dict) -> None:
         self.conn.execute("INSERT OR REPLACE INTO evaluations VALUES(?,?,?,?)", (episode_id, grader, json.dumps(score, sort_keys=True), now()))
+        checkpoint("after_evaluation_saved")
 
     def campaign_status(self, campaign: str) -> dict:
         row = self.conn.execute("SELECT status FROM campaigns WHERE campaign=?", (campaign,)).fetchone()

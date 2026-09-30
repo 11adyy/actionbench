@@ -101,6 +101,24 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(tuple(saved), ("completed", "incomplete", "max_output_tokens", "invalid"))
             self.assertGreater(store.campaign_spend(config.campaign), 0)
 
+    def test_zero_usage_content_filter_is_known_and_not_retried(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
+            broker = Broker(config, store)
+            raw = {"id": "filtered", "status": "incomplete", "incomplete_details": {"reason": "content_filter"},
+                   "usage": {"input_tokens": 0, "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0}, "output_tokens": 0}}
+            class Client:
+                calls = 0
+                def request(self, payload):
+                    self.calls += 1
+                    return raw
+            broker.client = Client()
+            for _ in range(2):
+                with self.assertRaises(ProviderOutputError): broker.call("e", "k", "i", "x", 4)
+            self.assertEqual(broker.client.calls, 1)
+            row = store.conn.execute("SELECT state,actual_usd,incomplete_reason,output_validation FROM requests").fetchone()
+            self.assertEqual(tuple(row), ("completed", 0.0, "content_filter", "invalid"))
+
     def test_received_response_with_inconsistent_usage_is_preserved_for_review(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)

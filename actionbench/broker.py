@@ -10,6 +10,7 @@ from typing import Any
 
 from .config import Config, api_key
 from .errors import BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, ProviderOutputError, ProviderRejectedError, UnknownProviderOutcome
+from .faults import checkpoint
 from .store import Store
 
 
@@ -81,7 +82,10 @@ class Broker:
             tokens = {"input_tokens": int(usage["input_tokens"]), "cached_input_tokens": int(details.get("cached_tokens", 0)), "cache_write_tokens": int(details.get("cache_write_tokens", 0)), "output_tokens": int(usage["output_tokens"])}
         except (KeyError, TypeError, ValueError) as exc:
             raise UnknownProviderOutcome("Provider response has malformed token usage") from exc
-        if tokens["input_tokens"] < 1 or tokens["output_tokens"] < 0 or min(tokens["cached_input_tokens"], tokens["cache_write_tokens"]) < 0 or tokens["cached_input_tokens"] + tokens["cache_write_tokens"] > tokens["input_tokens"]:
+        zero_usage_content_filter = (raw.get("status") == "incomplete" and
+                                     (raw.get("incomplete_details") or {}).get("reason") == "content_filter" and
+                                     all(value == 0 for value in tokens.values()))
+        if (tokens["input_tokens"] < 1 and not zero_usage_content_filter) or tokens["output_tokens"] < 0 or min(tokens["cached_input_tokens"], tokens["cache_write_tokens"]) < 0 or tokens["cached_input_tokens"] + tokens["cache_write_tokens"] > tokens["input_tokens"]:
             raise UnknownProviderOutcome("Provider response has impossible token usage")
         return tokens
 
@@ -126,6 +130,7 @@ class Broker:
         actual = self._cost(usage)
         reservation = self.store.conn.execute("SELECT reserved_usd,reserved_input_tokens FROM requests WHERE request_id=?", (request_id,)).fetchone()
         self.store.complete_request(request_id, raw.get("id"), raw, usage, actual)
+        checkpoint("after_response_saved")
         if reservation and (actual > reservation["reserved_usd"] or usage["input_tokens"] > reservation["reserved_input_tokens"]):
             self.store.event(None, "provider_usage_exceeded_reservation", {"request_id": request_id, "reserved_usd": reservation["reserved_usd"], "actual_usd": actual, "reserved_input_tokens": reservation["reserved_input_tokens"], "actual_input_tokens": usage["input_tokens"]})
         return ModelResult(self._text(raw), raw, raw.get("id"), usage["input_tokens"], usage["cached_input_tokens"], usage["output_tokens"], actual, request_id)
@@ -161,6 +166,7 @@ class Broker:
                         raise CampaignBudgetExceeded("Reconciled request would exceed the campaign dollar ceiling")
                 request_id = existing["request_id"]
                 self.store.mark_submitted(request_id)
+                checkpoint("after_submitted")
                 try:
                     raw = self.client.request(payload, timeout_seconds=timeout_seconds) if timeout_seconds is not None else self.client.request(payload)
                 except UnknownProviderOutcome as exc:
@@ -169,6 +175,7 @@ class Broker:
                     self.store.reject_request(request_id, str(exc), policy=True); raise
                 except (ConfigurationError, InfrastructureError) as exc:
                     self.store.reject_request(request_id, str(exc)); raise
+                checkpoint("after_response_received")
                 return self._checked_result(self._complete(request_id, raw))
             raise UnknownProviderOutcome(f"Request {request_key} has unsupported stored state {existing['state']}")
         if max_output_tokens < 1 or max_output_tokens > self.config.budget.max_output_tokens:
@@ -187,9 +194,12 @@ class Broker:
         reserve = self.estimate_usd(estimated_input, max_output_tokens)
         if self.store.campaign_spend(self.config.campaign) + reserve > self.store.budget_ceiling(self.config):
             raise CampaignBudgetExceeded("Campaign dollar budget would be exceeded")
+        checkpoint("before_reserve")
         request_id = str(uuid.uuid4())
         self.store.reserve_request(request_id, episode_id, request_key, request_hash, payload, reserve, estimated_input)
+        checkpoint("after_reserve")
         self.store.mark_submitted(request_id)
+        checkpoint("after_submitted")
         try:
             raw = self.client.request(payload, timeout_seconds=timeout_seconds) if timeout_seconds is not None else self.client.request(payload)
         except UnknownProviderOutcome as exc:
@@ -201,4 +211,5 @@ class Broker:
         except (ConfigurationError, InfrastructureError) as exc:
             self.store.reject_request(request_id, str(exc))
             raise
+        checkpoint("after_response_received")
         return self._checked_result(self._complete(request_id, raw))
