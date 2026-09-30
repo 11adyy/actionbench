@@ -117,7 +117,7 @@ class Broker:
         try:
             usage = self._usage(raw)
         except UnknownProviderOutcome as exc:
-            self.store.unknown_request(request_id, str(exc))
+            self.store.preserve_unpriced_response(request_id, raw, str(exc))
             raise
         actual = self._cost(usage)
         reservation = self.store.conn.execute("SELECT reserved_usd,reserved_input_tokens FROM requests WHERE request_id=?", (request_id,)).fetchone()

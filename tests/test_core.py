@@ -101,6 +101,25 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(tuple(saved), ("completed", "incomplete", "max_output_tokens", "invalid"))
             self.assertGreater(store.campaign_spend(config.campaign), 0)
 
+    def test_received_response_with_inconsistent_usage_is_preserved_for_review(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "plain", 0)
+            broker = Broker(config, store)
+            raw = {"id": "provider-known", "status": "completed", "model": "m", "output_text": "OK",
+                   "usage": {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 80, "cache_write_tokens": 80}, "output_tokens": 2}}
+            class Client:
+                calls = 0
+                def request(self, payload):
+                    self.calls += 1
+                    return raw
+            broker.client = Client()
+            for _ in range(2):
+                with self.assertRaises(UnknownProviderOutcome): broker.call("e", "k", "i", "x", 4)
+            self.assertEqual(broker.client.calls, 1)
+            saved = store.conn.execute("SELECT state,provider_request_id,response_json FROM requests").fetchone()
+            self.assertEqual((saved["state"], saved["provider_request_id"]), ("unknown_outcome", "provider-known"))
+            self.assertEqual(json.loads(saved["response_json"]), raw)
+
     def test_generated_procedure_underscores_and_paired_skill(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); destination = root / "package"
