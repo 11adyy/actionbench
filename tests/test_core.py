@@ -209,6 +209,19 @@ class CoreTests(unittest.TestCase):
             report = build_report(config, store)
             self.assertIn("provider_policy_rejections_observed", report["validation_reasons"])
 
+    def test_policy_event_in_scored_test_still_blocks_inference(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            store.create_episode("e", config.campaign, "task", "f", "action", 0)
+            store.reserve_request("r", "e", "first", "hash", {}, 0.1, 100)
+            store.mark_submitted("r")
+            store.reject_request("r", "invalid_prompt", policy=True)
+            store.save_evaluation("e", "f", {"primary": 1})
+            store.set_episode("e", "completed", retryable=False)
+            report = build_report(config, store)
+            self.assertEqual(report["provider_policy_events_by_phase"]["test"], 1)
+            self.assertIn("provider_content_filter_or_policy_rejection_in_test", report["validation_reasons"])
+
     def test_policy_preparation_includes_paired_skill_and_development(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d))

@@ -57,6 +57,19 @@ def build_report(config, store) -> dict:
     for item in package_creation.values():
         item["failure_rate"] = item["failed"] / item["attempted"] if item["attempted"] else None
     output = {"campaign": config.campaign, "analysis_status": "complete" if complete else "provisional", "planned_test_episodes": binding["planned_test_episodes"] if binding else None, "groups": {}, "package_creation": dict(package_creation), "skill_creation": dict(creation), "status": store.campaign_status(config.campaign)}
+    policy_events = defaultdict(int)
+    policy_test_by_family = defaultdict(int)
+    for row in store.conn.execute("""SELECT e.family,e.task_id,r.state,r.incomplete_reason FROM requests r
+                                   JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=?
+                                   AND (r.state='policy_rejected' OR r.incomplete_reason='content_filter')""", (config.campaign,)):
+        phase = "controls" if row["family"] == "integration" else ("development" if row["task_id"].startswith("creation-dev:") else ("package_creation" if row["task_id"].startswith("creation:") else "test"))
+        policy_events[phase] += 1
+        if phase == "test": policy_test_by_family[row["family"]] += 1
+    output["provider_policy_events_by_phase"] = dict(policy_events)
+    technical_failure_kinds = {"unclassified_legacy", "unclassified_agent_error", "harness_error", "grader_error", "infrastructure_error"}
+    technical_by_family = {family: sum(count for name, group in groups.items() if name.startswith(f"{family}:")
+                                       for kind, count in group["failure_kinds"].items() if kind in technical_failure_kinds)
+                           for family in {row["family"] for row in rows if row["family"] != "integration"}}
     def preparation_cost(family: str, condition: str, replica: int) -> float:
         if condition == "plain": return 0.0
         paired_skill = creation_costs[(family, "skill", replica)]
@@ -119,7 +132,8 @@ def build_report(config, store) -> dict:
             action_available = all((family, replica, "action") in available_packages for replica in replicas[family])
             baseline_available = baseline != "skill_script" or all((family, replica, "skill_script") in available_packages for replica in replicas[family])
             interpretable = action_available and baseline_available
-            inferential = complete and interpretable and quality["n_tasks"] >= 10 and quality["n_replicas"] >= 3 and not excluded[family]
+            inferential = (complete and interpretable and quality["n_tasks"] >= 10 and quality["n_replicas"] >= 3
+                          and not excluded[family] and not technical_by_family.get(family) and not policy_test_by_family[family])
             if not inferential:
                 quality["ci95"] = None; usd["ci95"] = None; total_usd["ci95"] = None
             reason = None if interpretable else ("action_package_unavailable" if not action_available else "baseline_package_unavailable")
@@ -155,8 +169,7 @@ def build_report(config, store) -> dict:
     output["model_calls_by_phase"] = dict(phase_calls)
     package_failures = sum(item["failed"] for kind, item in package_creation.items() if kind in {"action", "skill_script"})
     missing_action = package_creation.get("action", {}).get("completed", 0) == 0
-    technical_failure_kinds = {"unclassified_legacy", "unclassified_agent_error", "harness_error", "grader_error", "infrastructure_error"}
-    technical_failures = sum(count for group in groups.values() for kind, count in group["failure_kinds"].items() if kind in technical_failure_kinds)
+    technical_failures = sum(technical_by_family.values())
     provider_rejections = sum(group["failure_kinds"].get("provider_rejected", 0) for group in groups.values())
     scored_action = sum(group["completed"] for name, group in groups.items() if name.endswith(":action"))
     invocation_count = sum(item["invocations"] for item in output["procedure_usage"] if item["condition"] == "action")
@@ -166,6 +179,7 @@ def build_report(config, store) -> dict:
     if not scored_action: reasons.append("no_scored_action_episode")
     if technical_failures: reasons.append("technical_or_unclassified_episode_failures")
     if provider_rejections: reasons.append("provider_policy_rejections_observed")
+    if policy_events.get("test", 0): reasons.append("provider_content_filter_or_policy_rejection_in_test")
     if complete and not invocation_count: reasons.append("no_action_invocation_observed")
     output["execution_status"] = "terminal" if complete else ("blocked" if any(group["blocked"] for group in groups.values()) else "paused")
     output["validation_status"] = "failed" if missing_action or technical_failures else ("inconclusive" if reasons or not complete else "passed")
