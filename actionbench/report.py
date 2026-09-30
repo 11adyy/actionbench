@@ -9,13 +9,13 @@ from .statistics import crossed_paired_bootstrap
 
 
 def build_report(config, store) -> dict:
-    rows = store.conn.execute("""SELECT e.task_id,e.family,e.condition,e.replica,e.status,e.retryable,e.error,e.duration_seconds,ev.score_json,
+    rows = store.conn.execute("""SELECT e.task_id,e.family,e.condition,e.replica,e.status,e.retryable,e.error,e.failure_kind,e.duration_seconds,ev.score_json,
                               COALESCE(SUM(CASE WHEN r.state='rejected' THEN 0 ELSE COALESCE(r.actual_usd,r.reserved_usd) END),0) cost,
                               SUM(CASE WHEN r.state='completed' THEN 1 ELSE 0 END) model_calls,
                               SUM(CASE WHEN r.state IN ('reserved','submitted','unknown_outcome') THEN 1 ELSE 0 END) uncertain_requests
                               FROM episodes e LEFT JOIN evaluations ev ON ev.episode_id=e.episode_id
                               LEFT JOIN requests r ON r.episode_id=e.episode_id WHERE e.campaign=? GROUP BY e.episode_id""", (config.campaign,)).fetchall()
-    groups = defaultdict(lambda: {"planned": 0, "completed": 0, "execution_failed": 0, "pending": 0, "blocked": 0, "scored": [], "costs": [], "terminal_costs": [], "terminal_seconds": [], "terminal_calls": [], "uncertain_requests": 0})
+    groups = defaultdict(lambda: {"planned": 0, "completed": 0, "execution_failed": 0, "pending": 0, "blocked": 0, "scored": [], "costs": [], "terminal_costs": [], "terminal_seconds": [], "terminal_calls": [], "uncertain_requests": 0, "failure_kinds": defaultdict(int)})
     creation = defaultdict(lambda: {"episodes": 0, "completed": 0, "failed": 0, "total_usd": 0.0})
     creation_costs = defaultdict(float)
     for row in rows:
@@ -34,7 +34,9 @@ def build_report(config, store) -> dict:
             group["terminal_calls"].append(int(row["model_calls"]))
         if row["status"] == "completed" and row["score_json"]:
             group["completed"] += 1; group["scored"].append(float(json.loads(row["score_json"])["primary"]))
-        elif row["status"] == "failed" and not row["retryable"]: group["execution_failed"] += 1
+        elif row["status"] == "failed" and not row["retryable"]:
+            group["execution_failed"] += 1
+            group["failure_kinds"][row["failure_kind"] or "unclassified_legacy"] += 1
         elif row["status"] == "blocked": group["blocked"] += 1
         else: group["pending"] += 1
         group.setdefault("terminal", 0); group["terminal"] += terminal
@@ -62,6 +64,7 @@ def build_report(config, store) -> dict:
             "mean_seconds_per_terminal_episode": sum(group["terminal_seconds"]) / group["terminal"] if group["terminal"] else None,
             "mean_model_calls_per_terminal_episode": sum(group["terminal_calls"]) / group["terminal"] if group["terminal"] else None,
             "uncertain_provider_requests": group["uncertain_requests"],
+            "failure_kinds": dict(group["failure_kinds"]),
         }
     by_cell = {}
     for row in rows:
@@ -70,6 +73,8 @@ def build_report(config, store) -> dict:
         score = 0.0
         if row["status"] == "completed" and row["score_json"]: score = float(json.loads(row["score_json"])["primary"])
         by_cell[(row["family"], row["task_id"], row["replica"], row["condition"])] = {"terminal": terminal, "score": score, "cost": float(row["cost"])}
+    available_packages = {(r["family"], r["replica"], r["condition"]) for r in store.conn.execute(
+        "SELECT family,replica,condition FROM generated_packages WHERE campaign=?", (config.campaign,)).fetchall()}
     comparisons = {}
     for baseline in ("skill", "skill_script", "improvised"):
         grouped = defaultdict(lambda: defaultdict(list)); excluded = defaultdict(int); replicas = defaultdict(set)
@@ -91,16 +96,30 @@ def build_report(config, store) -> dict:
             break_even = None if mean_runtime_delta >= 0 else max(0, int(math.ceil(mean_creation_delta / -mean_runtime_delta)))
             quality = crossed_paired_bootstrap(quality_cells, salt)
             usd = crossed_paired_bootstrap(cost_cells, salt + 1)
-            inferential = complete and quality["n_tasks"] >= 10 and quality["n_replicas"] >= 3 and not excluded[family]
+            action_available = all((family, replica, "action") in available_packages for replica in replicas[family])
+            baseline_available = baseline != "skill_script" or all((family, replica, "skill_script") in available_packages for replica in replicas[family])
+            interpretable = action_available and baseline_available
+            inferential = complete and interpretable and quality["n_tasks"] >= 10 and quality["n_replicas"] >= 3 and not excluded[family]
             if not inferential:
                 quality["ci95"] = None; usd["ci95"] = None
+            reason = None if interpretable else ("action_package_unavailable" if not action_available else "baseline_package_unavailable")
+            margin = config.analysis.quality_noninferiority_margin
+            supports_noninferiority = bool(inferential and quality["ci95"][0] > -margin)
+            supports_runtime_saving = bool(inferential and usd["ci95"][1] < 0)
             comparisons[f"{family}:action_minus_{baseline}"] = {
                 "quality": quality,
                 "usd": usd,
                 "inferential_interval_available": inferential,
+                "interpretable": interpretable,
+                "invalid_reason": reason,
                 "incomplete_pairs_excluded": excluded[family],
-                "observed_cost_saving_at_nonnegative_quality": quality["mean_delta"] >= 0 and usd["mean_delta"] <= 0,
-                "amortization": {"mean_creation_delta_usd_per_replica": mean_creation_delta, "mean_runtime_delta_usd_per_episode": mean_runtime_delta, "break_even_uses_per_package": break_even},
+                "observed_cost_saving_at_nonnegative_quality": (supports_noninferiority and supports_runtime_saving) if inferential else None,
+                "noninferiority_margin": margin,
+                "supports_quality_noninferiority": supports_noninferiority if inferential else None,
+                "supports_runtime_cost_saving": supports_runtime_saving if inferential else None,
+                "amortization": {"mean_creation_delta_usd_per_replica": mean_creation_delta, "mean_runtime_delta_usd_per_episode": mean_runtime_delta, "break_even_uses_per_package": break_even,
+                                 "declared_uses": config.analysis.amortization_uses,
+                                 "mean_total_delta_at_declared_uses": mean_creation_delta + config.analysis.amortization_uses * mean_runtime_delta} if interpretable else None,
             }
     output["paired_comparisons"] = comparisons
     usage = store.conn.execute("""SELECT e.family,e.condition,ar.action_id,COUNT(*) invocations,
@@ -109,5 +128,21 @@ def build_report(config, store) -> dict:
                                   WHERE e.campaign=? AND e.family!='integration' AND e.task_id NOT LIKE 'creation%'
                                   GROUP BY e.family,e.condition,ar.action_id""", (config.campaign,)).fetchall()
     output["procedure_usage"] = [dict(row) for row in usage]
+    package_failures = sum(item["failed"] for kind, item in package_creation.items() if kind in {"action", "skill_script"})
+    missing_action = package_creation.get("action", {}).get("completed", 0) == 0
+    unclassified_failures = sum(group["failure_kinds"].get("unclassified_legacy", 0) for group in groups.values())
+    scored_action = sum(group["completed"] for name, group in groups.items() if name.endswith(":action"))
+    invocation_count = sum(item["invocations"] for item in output["procedure_usage"] if item["condition"] == "action")
+    reasons = []
+    if missing_action: reasons.append("no_action_package_created")
+    if package_failures: reasons.append("procedure_package_creation_failed")
+    if not scored_action: reasons.append("no_scored_action_episode")
+    if unclassified_failures: reasons.append("unclassified_episode_failures")
+    if complete and not invocation_count: reasons.append("no_action_invocation_observed")
+    output["execution_status"] = "terminal" if complete else ("blocked" if any(group["blocked"] for group in groups.values()) else "paused")
+    output["validation_status"] = "failed" if missing_action else ("inconclusive" if reasons or not complete else "passed")
+    output["validation_reasons"] = reasons
+    output["scientific_status"] = "diagnostic_only" if output["validation_status"] != "passed" else ("confirmatory" if config.analysis.study_role == "confirmatory" else "exploratory")
+    output["analysis_status"] = output["scientific_status"]
     output["pricing_configured"] = all(value > 0 for value in (config.provider.input_usd_per_million, config.provider.output_usd_per_million))
     return output

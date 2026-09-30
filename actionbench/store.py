@@ -66,7 +66,7 @@ class Store:
           episode_id TEXT PRIMARY KEY, campaign TEXT NOT NULL REFERENCES campaigns(campaign),
           task_id TEXT NOT NULL, family TEXT NOT NULL, condition TEXT NOT NULL, replica INTEGER NOT NULL,
           package_hash TEXT, status TEXT NOT NULL, retryable INTEGER NOT NULL DEFAULT 1, attempts INTEGER NOT NULL DEFAULT 0,
-          duration_seconds REAL NOT NULL DEFAULT 0,
+          duration_seconds REAL NOT NULL DEFAULT 0, failure_kind TEXT,
           final_artifact TEXT, final_artifact_sha256 TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           UNIQUE(campaign,task_id,condition,replica,package_hash)
         );
@@ -107,6 +107,7 @@ class Store:
             "ALTER TABLE episodes ADD COLUMN retryable INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE episodes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE episodes ADD COLUMN duration_seconds REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE episodes ADD COLUMN failure_kind TEXT",
             "ALTER TABLE episodes ADD COLUMN final_artifact_sha256 TEXT",
             "ALTER TABLE requests ADD COLUMN request_key TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE requests ADD COLUMN request_hash TEXT NOT NULL DEFAULT ''",
@@ -177,11 +178,11 @@ class Store:
     def episode(self, episode_id: str):
         return self.conn.execute("SELECT * FROM episodes WHERE episode_id=?", (episode_id,)).fetchone()
 
-    def set_episode(self, episode_id: str, status: str, *, final_artifact: str | None = None, error: str | None = None, retryable: bool = True) -> None:
+    def set_episode(self, episode_id: str, status: str, *, final_artifact: str | None = None, error: str | None = None, retryable: bool = True, failure_kind: str | None = None) -> None:
         if status == "running":
-            self.conn.execute("UPDATE episodes SET status=?,attempts=attempts+1,error=?,updated_at=? WHERE episode_id=?", (status, error, now(), episode_id))
+            self.conn.execute("UPDATE episodes SET status=?,attempts=attempts+1,error=?,failure_kind=NULL,updated_at=? WHERE episode_id=?", (status, error, now(), episode_id))
             return
-        self.conn.execute("UPDATE episodes SET status=?,retryable=?,final_artifact=COALESCE(?,final_artifact),error=?,updated_at=? WHERE episode_id=?", (status, int(retryable), final_artifact, error, now(), episode_id))
+        self.conn.execute("UPDATE episodes SET status=?,retryable=?,final_artifact=COALESCE(?,final_artifact),error=?,failure_kind=?,updated_at=? WHERE episode_id=?", (status, int(retryable), final_artifact, error, failure_kind, now(), episode_id))
 
     def save_answer(self, episode_id: str, path: str) -> None:
         digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()

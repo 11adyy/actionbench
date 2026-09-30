@@ -13,6 +13,11 @@ def plan_sample(config, store, family: str, baseline: str, target_delta: float, 
         raise ActionBenchError("Freeze the completed pilot before planning a new campaign from its outcomes")
     if baseline not in {"skill", "skill_script", "improvised"}:
         raise ActionBenchError("Baseline must be skill, skill_script, or improvised")
+    from .report import build_report
+    report = build_report(config, store)
+    comparison = report["paired_comparisons"].get(f"{family}:action_minus_{baseline}")
+    if report["scientific_status"] != "exploratory" or not comparison or not comparison["interpretable"]:
+        raise ActionBenchError("Pilot is diagnostic or the requested contrast is not interpretable; cannot plan a confirmatory sample")
     if not 0 < target_delta <= 1 or not 0 < target_half_width <= 1:
         raise ActionBenchError("Target quality difference and interval half-width must be in (0,1]")
     rows = store.conn.execute("""SELECT e.task_id,e.replica,e.condition,e.status,e.retryable,v.score_json

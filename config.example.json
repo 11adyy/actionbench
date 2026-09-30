@@ -11,6 +11,7 @@
   },
   "budget": {"usd": 8.0, "max_input_tokens": 64000, "max_output_tokens": 8000, "max_llm_calls": 16},
   "execution": {"docker_image": "python:3.11-slim", "timeout_seconds": 300, "memory_mb": 2048, "cpus": 2},
+  "analysis": {"quality_noninferiority_margin": 0.05, "amortization_uses": 20, "study_role": "pilot"},
   "dataset_root": "data",
   "artifact_root": "artifacts",
   "replicas": 3,

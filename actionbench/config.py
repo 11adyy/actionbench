@@ -39,6 +39,13 @@ class ExecutionConfig:
 
 
 @dataclass(frozen=True)
+class AnalysisConfig:
+    quality_noninferiority_margin: float
+    amortization_uses: int
+    study_role: str
+
+
+@dataclass(frozen=True)
 class Config:
     campaign: str
     provider: ProviderConfig
@@ -50,6 +57,7 @@ class Config:
     conditions: tuple[str, ...]
     source_path: Path
     fingerprint: str
+    analysis: AnalysisConfig
 
     @property
     def db_path(self) -> Path:
@@ -90,11 +98,14 @@ def load_config(path: str | Path) -> Config:
         conditions=tuple(_required(raw, "conditions")),
         source_path=source,
         fingerprint=hashlib.sha256(canonical.encode()).hexdigest(),
+        analysis=AnalysisConfig(**raw.get("analysis", {"quality_noninferiority_margin": 0.05, "amortization_uses": 20, "study_role": "pilot"})),
     )
     if not cfg.campaign or cfg.replicas < 1 or cfg.budget.usd <= 0:
         raise ConfigurationError("campaign, replicas, and budget.usd must be positive")
     if set(cfg.conditions) != {"plain", "skill", "skill_script", "improvised", "action"}:
         raise ConfigurationError("conditions must contain plain, skill, skill_script, improvised, and action exactly")
+    if not 0 < cfg.analysis.quality_noninferiority_margin < 1 or cfg.analysis.amortization_uses < 1 or cfg.analysis.study_role not in {"pilot", "confirmatory"}:
+        raise ConfigurationError("analysis requires a valid noninferiority margin, use horizon, and study role")
     return cfg
 
 

@@ -59,6 +59,18 @@ if [ "${AB_CHECKPOINT_TEST:-}" = 1 ]; then
 fi
 
 if [ -f .cloud-state/complete ]; then
+  python - <<'PY'
+import hashlib, json, sqlite3
+from pathlib import Path
+marker = json.loads(Path('.cloud-state/complete').read_text())
+cfg = Path('experiment.json')
+with sqlite3.connect('artifacts/actionbench-v3.sqlite3') as db:
+    row = db.execute('SELECT status FROM campaigns WHERE campaign=?', (marker['campaign'],)).fetchone()
+assert marker['campaign'] == json.loads(cfg.read_text())['campaign']
+assert marker['config_sha256'] == hashlib.sha256(cfg.read_bytes()).hexdigest()
+assert marker['source_sha'] == Path('.cloud-state/source-sha').read_text().strip()
+assert row and row[0] == 'frozen'
+PY
   echo 'Campaign already complete.'
   exit 0
 fi
@@ -87,14 +99,34 @@ set +e
 timeout --signal=INT --kill-after=30s 300m bash -c 'python -m actionbench.cli create-skills --config experiment.json --manifest manifests/study.json && python -m actionbench.cli resume --config experiment.json --manifest manifests/study.json'
 code=$?
 set -e
-if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
-  echo "Evaluation interrupted with code $code; durable ledger will be archived" >&2
+if [ "$code" -eq 0 ] && python -m actionbench.cli freeze --config "$cfg"; then
+  echo 'Campaign reached a terminal state and was frozen.'
+else
+  echo 'Campaign is incomplete; state will be archived for resume or diagnosis.'
 fi
 python -m actionbench.cli status --config "$cfg" > artifacts/status.json
-python -m actionbench.cli report --config "$cfg" --out artifacts/report.json || true
-if python -m actionbench.cli freeze --config "$cfg"; then
-  printf 'complete\n' > .cloud-state/complete
-  echo 'Campaign complete and frozen.'
-else
-  echo 'Campaign incomplete. Download its state artifact or run resume with the same campaign ID.'
+python -m actionbench.cli report --config "$cfg" --out artifacts/report.json > /dev/null
+python - <<'PY'
+import hashlib, json
+from pathlib import Path
+cfg = Path('experiment.json')
+status = json.loads(Path('artifacts/status.json').read_text())
+report = json.loads(Path('artifacts/report.json').read_text())
+if status['status'] != report['status']['status']:
+    raise SystemExit('Report and status disagree on campaign state')
+if status['status'] == 'frozen':
+    marker = {'campaign': status['campaign'], 'source_sha': Path('.cloud-state/source-sha').read_text().strip(),
+              'config_sha256': hashlib.sha256(cfg.read_bytes()).hexdigest(),
+              'validation_status': report['validation_status'], 'scientific_status': report['scientific_status']}
+    Path('.cloud-state/complete').write_text(json.dumps(marker, sort_keys=True) + '\n')
+summary = Path(__import__('os').environ.get('GITHUB_STEP_SUMMARY', '/dev/null'))
+with summary.open('a') as output:
+    output.write(f"## ActionBench {status['campaign']}\n\n")
+    output.write(f"Campaign: {status['status']} · Validation: {report['validation_status']} · Scientific use: {report['scientific_status']}\n\n")
+    output.write(f"Accounted model cost: ${status['accounted_usd']:.4f} of ${status['budget_ceiling_usd']:.2f}.\n\n")
+    output.write('Reasons: ' + (', '.join(report['validation_reasons']) or 'none') + '\n')
+PY
+if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
+  echo "Evaluation failed with code $code; durable ledger was archived" >&2
+  exit "$code"
 fi
