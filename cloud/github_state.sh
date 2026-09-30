@@ -9,7 +9,7 @@ case "${1:-}" in
     if [ "$AB_ACTION" != smoke ]; then
       artifact_id=$(python cloud/find_state_artifact.py)
     fi
-    if [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = raise-budget ]; then
+    if [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = resume-canary ] || [ "$AB_ACTION" = raise-budget ]; then
       [ -n "$artifact_id" ] || { echo 'No saved campaign artifact exists to resume' >&2; exit 2; }
       gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > .cloud-state/download.zip
       unzip -p .cloud-state/download.zip state.tar.gz | tar -xz -C .
@@ -20,7 +20,7 @@ case "${1:-}" in
     else
       [ -z "$artifact_id" ] || { echo 'Campaign already has saved state; use resume or a new campaign ID' >&2; exit 2; }
       source_sha=$(git rev-parse HEAD)
-      if [ "$AB_ACTION" = start ]; then printf '%s\n' "$source_sha" > .cloud-state/source-sha; fi
+      if [ "$AB_ACTION" = start ] || [ "$AB_ACTION" = canary ]; then printf '%s\n' "$source_sha" > .cloud-state/source-sha; fi
     fi
     printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
     ;;

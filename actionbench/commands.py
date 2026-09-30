@@ -10,6 +10,9 @@ import time
 import uuid
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
+
 from .agent import AgentRunner
 from .broker import Broker
 from .contracts import decision_format
@@ -107,6 +110,9 @@ def dispatch(args, config, store) -> int:
         _create_packages(config, store, manifest)
         outcomes = store.conn.execute("SELECT status,COUNT(*) n FROM episodes WHERE campaign=? AND task_id LIKE 'creation:%' GROUP BY status", (config.campaign,)).fetchall()
         print(json.dumps({"status": "creation_attempted", "packages": {row["status"]: row["n"] for row in outcomes}}, indent=2)); return 0
+    if args.command == "canary":
+        result = _canary(config, store, manifest)
+        print(json.dumps(result, indent=2)); return 0
     if args.command in {"run", "resume"}:
         failures = verify_data(manifest)
         if failures: raise ActionBenchError("\n".join(failures))
@@ -179,6 +185,7 @@ def _container_smoke(config) -> dict:
     """Exercise the production Docker runner, including colon paths and read-only action mounts."""
     with tempfile.TemporaryDirectory(prefix="actionbench-container-smoke-") as temp:
         root = Path(temp)
+        root.chmod(0o755)
         action = root / "action:readonly"; action.mkdir()
         (action / "main.py").write_text(
             "import json,sys\nfrom pathlib import Path\n"
@@ -194,6 +201,81 @@ def _container_smoke(config) -> dict:
         if result != {"value": "round-trip", "readonly": True}:
             raise InfrastructureError(f"Production container runner failed its real round trip: {result}")
         return {"passed": True, "colon_path": True, "readonly_action": True, "jsonl_round_trip": True}
+
+
+def _sample_procedure_input(schema: dict, public: dict) -> dict:
+    """Construct a development-only integration input; never use a test answer."""
+    result = {}
+    prompt = public.get("prompt") or public.get("question") or json.dumps(public, sort_keys=True)
+    for key, shape in schema.get("properties", {}).items():
+        if key in public:
+            result[key] = public[key]
+        elif key in {"task", "problem", "text", "task_text", "problem_text", "prompt"}:
+            result[key] = prompt
+        elif key == "question":
+            result[key] = public.get("question", prompt)
+        elif key == "context":
+            result[key] = public.get("context", [])
+        elif "default" in shape:
+            result[key] = shape["default"]
+        else:
+            declared_type = shape.get("type")
+            if isinstance(declared_type, list):
+                declared_type = next((item for item in declared_type if item != "null"), "string")
+            result[key] = {"string": "development probe", "integer": 0, "number": 0,
+                           "boolean": False, "array": [], "object": {}}.get(declared_type, "development probe")
+    try:
+        Draft202012Validator(schema).validate(result)
+    except ValidationError as exc:
+        raise ActionBenchError(f"Canary input does not satisfy generated schema: {exc.message}") from exc
+    return result
+
+
+def _canary(config, store, manifest) -> dict:
+    if config.replicas != 1:
+        raise ActionBenchError("Canary requires a frozen configuration with exactly one package replica")
+    outcomes = []
+    for family in manifest.families:
+        task = next((item for item in family.tasks if item.split == "development"), None)
+        if not task:
+            raise ActionBenchError(f"Canary needs development tasks for {family.id}")
+        public = json.loads(task.public_input.read_text())
+        for kind in ("skill", "skill_script", "action"):
+            package = store.package(config.campaign, family.id, 0, kind)
+            if not package:
+                raise ActionBenchError(f"Canary has no generated {kind} package for {family.id}")
+            path = _verified_package(package)
+            paired = store.package(config.campaign, family.id, 0, "skill")
+            if (path / "SKILL.md").read_bytes() != (_verified_package(paired) / "SKILL.md").read_bytes():
+                raise ActionBenchError(f"Canary {kind} did not preserve the paired skill")
+            if kind == "skill":
+                outcomes.append({"family": family.id, "kind": kind, "package_hash": package["package_hash"], "paired_skill": True})
+                continue
+            procedure_file = next(iter(sorted(path.glob("procedures/*/procedure.json"))), None)
+            if not procedure_file:
+                raise ActionBenchError(f"Canary {kind} exposes no procedure")
+            procedure = json.loads(procedure_file.read_text())
+            input_data = _sample_procedure_input(procedure["input_schema"], public)
+            episode_id = f"{config.campaign}:canary:{family.id}:{kind}:{procedure['id']}"
+            store.create_episode(episode_id, config.campaign, f"canary-direct:{family.id}:{kind}", "integration", kind, 0)
+            existing = store.episode(episode_id)
+            if existing["status"] != "completed":
+                store.set_episode(episode_id, "running")
+                try:
+                    ActionRunner(config, Broker(config, store)).run(episode_id, procedure_file.parent, "direct", input_data, allow_llm=kind == "action")
+                    store.set_episode(episode_id, "completed", retryable=False)
+                except UnknownProviderOutcome as exc:
+                    store.set_episode(episode_id, "blocked", error=str(exc), retryable=False, failure_kind="provider_outcome_unknown")
+                    raise
+                except Exception as exc:
+                    store.set_episode(episode_id, "failed", error=str(exc), retryable=False, failure_kind="canary_execution_failed")
+                    raise
+            calls = store.conn.execute("SELECT COUNT(*) FROM requests WHERE episode_id=? AND state='completed'", (episode_id,)).fetchone()[0]
+            if kind == "action" and calls < 1:
+                raise ActionBenchError(f"Canary action {procedure['id']} made no brokered model call")
+            outcomes.append({"family": family.id, "kind": kind, "package_hash": package["package_hash"],
+                             "procedure_id": procedure["id"], "direct_model_calls": calls})
+    return {"passed": True, "checks": outcomes}
 
 
 def _smoke(manifest: Manifest, config) -> dict:

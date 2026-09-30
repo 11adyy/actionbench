@@ -5,15 +5,15 @@ mkdir -p .cloud-state artifacts
 cfg=experiment.json
 manifest=manifests/study.json
 
-if [ "$AB_ACTION" = start ]; then
+if [ "$AB_ACTION" = start ] || [ "$AB_ACTION" = canary ]; then
   if [ "${AB_CHECKPOINT_TEST:-}" = 1 ]; then
     cp config.example.json experiment.json
   else
     [ -n "${OPENAI_API_KEY:-}" ] || { echo 'Set OPENAI_API_KEY in GitHub repository Actions secrets' >&2; exit 2; }
     python cloud/configure.py
   fi
-elif [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = raise-budget ]; then
-  if [ "$AB_ACTION" = resume ] && [ "${AB_CHECKPOINT_TEST:-}" != 1 ]; then
+elif [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = resume-canary ] || [ "$AB_ACTION" = raise-budget ]; then
+  if { [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = resume-canary ]; } && [ "${AB_CHECKPOINT_TEST:-}" != 1 ]; then
     [ -n "${OPENAI_API_KEY:-}" ] || { echo 'Set OPENAI_API_KEY in GitHub repository Actions secrets' >&2; exit 2; }
   fi
   [ -s "$cfg" ] || { echo 'Missing restored campaign config' >&2; exit 2; }
@@ -33,13 +33,13 @@ if [ "$AB_ACTION" = raise-budget ]; then
   exit 0
 fi
 
-if [ "$AB_ACTION" = resume ]; then
+if [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = resume-canary ]; then
   [ -s .cloud-state/grader-images.tar.gz ] || { echo 'Exact grader images were not cached. Resume is blocked to preserve image fingerprints.' >&2; exit 2; }
   gzip -dc .cloud-state/grader-images.tar.gz | docker load
 else
   python -m actionbench.cli images build --config "$cfg"
   docker pull python:3.11-slim
-  if [ "$AB_ACTION" = start ]; then
+  if [ "$AB_ACTION" = start ] || [ "$AB_ACTION" = canary ]; then
     docker save actionbench-mbppplus:v1 actionbench-hotpot:v1 python:3.11-slim | gzip -1 > .cloud-state/grader-images.tar.gz
   fi
 fi
@@ -76,7 +76,7 @@ PY
 fi
 
 if [ ! -f .cloud-state/broker-passed ]; then
-  if [ "$AB_ACTION" = resume ]; then
+  if [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = resume-canary ]; then
     blocked=$(python - <<'PY'
 import json, sqlite3
 from pathlib import Path
@@ -93,6 +93,15 @@ PY
   fi
   python -m actionbench.cli integration-check --config "$cfg" --manifest "$manifest"
   printf 'passed\n' > .cloud-state/broker-passed
+fi
+
+if [ "$AB_ACTION" = canary ] || [ "$AB_ACTION" = resume-canary ]; then
+  python -m actionbench.cli create-skills --config "$cfg" --manifest "$manifest"
+  python -m actionbench.cli canary --config "$cfg" --manifest "$manifest" > artifacts/canary.json
+  python -m actionbench.cli status --config "$cfg" > artifacts/status.json
+  python -m actionbench.cli report --config "$cfg" --out artifacts/report.json > /dev/null
+  echo 'Generated-package canary passed real Docker and model calls.'
+  exit 0
 fi
 
 set +e

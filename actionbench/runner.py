@@ -32,6 +32,10 @@ class ContainerRunner:
 
     def execute(self, episode_id: str, run_id: str, workspace: Path, command: list[str], input_data: dict, action_dir: Path | None = None, allow_llm: bool = False) -> dict:
         workspace.mkdir(parents=True, exist_ok=True)
+        # Docker on hosted runners may map its container user to a different UID.
+        # This directory is private to one invocation and is the only writable
+        # bind mount available to generated code.
+        workspace.chmod(0o777)
         container_name = f"actionbench-{uuid.uuid4().hex}"
         try:
             proc = subprocess.Popen(self._docker(workspace, command, action_dir, container_name), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

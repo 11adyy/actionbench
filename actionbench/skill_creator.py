@@ -20,7 +20,7 @@ from .manifest import Family
 BASE = """Create reusable instructions or narrow procedures for a benchmark family. Use only development examples; never include their answers or hidden test answers. Do not use network, credentials, shell commands, subprocesses, or external packages. Procedure IDs must match ^[A-Za-z][A-Za-z0-9_-]{0,63}$."""
 SKILL_PROMPT = BASE + """ Return skill_md as useful operational instructions. The agent has a sandboxed Python code tool but no direct model-call tool."""
 SCRIPT_PROMPT = BASE + """ Return one or two narrow deterministic procedures; the paired skill is supplied by the harness. Each procedure has id, description, input_schema_json (a JSON Schema object serialized as a string), and complete Python code. The program reads one JSON line with an input object and emits one JSON line with kind=result and an output object. It may not import action_sdk or request an LLM. Do not write an entire agent loop."""
-ACTION_PROMPT = BASE + """ Return one or two narrow reusable procedures; the paired skill is supplied by the harness. Each procedure has id, description, input_schema_json (a JSON Schema object serialized as a string), and complete Python code. Use `from action_sdk import ActionContext`; read one JSON input line; construct ctx = ActionContext(message['input']); optionally call ctx.call_llm(prompt, instructions='', max_output_tokens=1024); finish with ctx.emit(object). Do not write an entire agent loop."""
+ACTION_PROMPT = BASE + """ Return one or two narrow reusable procedures; the paired skill is supplied by the harness. Each procedure has id, description, input_schema_json (a JSON Schema object serialized as a string), and complete Python code. Use `from action_sdk import ActionContext`; read one JSON input line; construct ctx = ActionContext(message['input']); make at least one controlled ctx.call_llm(prompt, instructions='', max_output_tokens=1024) on a normal valid input; finish with ctx.emit(object). The call must help perform the procedure. Do not write an entire agent loop."""
 
 PROCEDURE_ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")
 
@@ -51,8 +51,20 @@ def _validate_procedure(procedure: dict, kind: str) -> dict:
     if kind == "action" and "ctx.emit" not in code: raise ActionBenchError(f"Procedure {procedure_id} violates the action protocol")
     if kind == "action" and "from action_sdk import ActionContext" not in code: raise ActionBenchError(f"Action {procedure_id} cannot call the controlled LLM")
     if kind == "skill_script" and ("action_sdk" in code or "llm_request" in code or "call_llm" in code): raise ActionBenchError(f"Script {procedure_id} attempts to access the LLM")
-    try: ast.parse(code)
+    try: tree = ast.parse(code)
     except SyntaxError as exc: raise ActionBenchError(f"Procedure {procedure_id} has invalid Python: {exc}") from exc
+    banned_imports = {"subprocess", "socket", "requests", "urllib", "http", "ftplib", "smtplib", "ctypes"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(alias.name.split(".")[0] in banned_imports for alias in node.names):
+            raise ActionBenchError(f"Procedure {procedure_id} imports a disallowed module")
+        if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] in banned_imports:
+            raise ActionBenchError(f"Procedure {procedure_id} imports a disallowed module")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"eval", "exec", "compile", "__import__"}:
+            raise ActionBenchError(f"Procedure {procedure_id} uses a disallowed dynamic execution call")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "os" and node.func.attr in {"system", "popen"}:
+            raise ActionBenchError(f"Procedure {procedure_id} uses a disallowed shell call")
+    if kind == "action" and not any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "call_llm" for node in ast.walk(tree)):
+        raise ActionBenchError(f"Action {procedure_id} must call the brokered LLM")
     return schema
 
 

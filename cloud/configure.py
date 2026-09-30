@@ -31,6 +31,11 @@ def main() -> None:
     source = Path("config.example.json")
     data = json.loads(source.read_text())
     data["campaign"] = campaign
+    if os.environ.get("AB_REPLICAS"):
+        replicas = int(os.environ["AB_REPLICAS"])
+        if not 1 <= replicas <= 32:
+            raise ValueError("AB_REPLICAS must be between 1 and 32")
+        data["replicas"] = replicas
     data["provider"]["model"] = model
     data["provider"]["input_usd_per_million"] = price("AB_INPUT_USD_PER_MILLION")
     data["provider"]["cached_input_usd_per_million"] = price("AB_CACHED_INPUT_USD_PER_MILLION", positive=False) if os.environ.get("AB_CACHED_INPUT_USD_PER_MILLION") else 0.0

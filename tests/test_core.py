@@ -89,7 +89,7 @@ class CoreTests(unittest.TestCase):
     def test_generated_procedure_underscores_and_paired_skill(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); destination = root / "package"
-            code = "import json,sys\nfrom action_sdk import ActionContext\nctx=ActionContext(json.loads(sys.stdin.readline())['input'])\nctx.emit({'ok': True})\n"
+            code = "import json,sys\nfrom action_sdk import ActionContext\nctx=ActionContext(json.loads(sys.stdin.readline())['input'])\ntext=ctx.call_llm('Check input', max_output_tokens=16)\nctx.emit({'text': text})\n"
             procedure = {"id": "extract_function_contract", "description": "Extract a contract",
                          "input_schema_json": '{"type":"object"}', "code": code}
             self.assertEqual(_validate_procedure(procedure, "action"), {"type": "object"})
