@@ -11,6 +11,20 @@ finalize_state() {
   if [ "${AB_ACTION:-}" != smoke ] && [ "${AB_CHECKPOINT_TEST:-}" != 1 ] && [ -s "$cfg" ] && [ -s artifacts/actionbench-v3.sqlite3 ]; then
     python -m actionbench.cli status --config "$cfg" > artifacts/status.json || echo 'Could not publish status.json' >&2
     python -m actionbench.cli report --config "$cfg" --out artifacts/report.json > /dev/null || echo 'Could not publish report.json' >&2
+    if [ "$code" -ne 0 ] && [ -s artifacts/status.json ] && [ -s artifacts/report.json ]; then
+      python - <<'PY' || echo 'Could not write failure summary' >&2
+import json, os
+from pathlib import Path
+status = json.loads(Path('artifacts/status.json').read_text())
+report = json.loads(Path('artifacts/report.json').read_text())
+summary = Path(os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null'))
+with summary.open('a') as output:
+    output.write(f"## ActionBench {status['campaign']} — interrupted\n\n")
+    output.write(f"Campaign: {status['status']} · Validation: {report['validation_status']} · Scientific use: {report['scientific_status']}\n\n")
+    output.write(f"Confirmed model cost: ${status.get('confirmed_usd', 0):.4f}; reserved or uncertain: ${status.get('reserved_or_uncertain_usd', 0):.4f}.\n\n")
+    output.write('Reasons: ' + (', '.join(report['validation_reasons']) or 'see worker error and ledger') + '\n')
+PY
+    fi
   fi
   exit "$code"
 }
