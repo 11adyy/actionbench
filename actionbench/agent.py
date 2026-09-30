@@ -12,7 +12,7 @@ from .errors import ActionBenchError, BudgetExceeded, CampaignBudgetExceeded, Co
 from .runner import ActionRunner
 
 
-AGENT_INSTRUCTIONS = """You are an agent solving a benchmark task. Return only the decision object required by the response schema. The outer decision object is the harness protocol; its `answer` string is the actual benchmark submission. For a Python programming task, put complete Python source in `answer`. For a question-answering task, put the required answer object serialized as JSON in `answer`. Do not put the harness decision object itself in `answer`. All decision fields must be present; use null for unused fields. For `code`, write a Python JSONL program without network or model access: read one input line and emit {\"kind\":\"result\",\"output\":object}. For `procedure`, choose a listed ID and provide `input_json` as a JSON object string matching its schema. For `llm_code`, use ActionContext and call_llm through the harness. Never invent tool observations. Only choose a tool listed in `tools`; return a final answer when ready."""
+AGENT_INSTRUCTIONS = """You are an agent solving a benchmark task. Return only the decision object required by the response schema. The outer decision object is the harness protocol; its `answer` string is the actual benchmark submission. For a Python programming task, put complete Python source in `answer`. For a question-answering task, put the required answer object serialized as JSON in `answer`. Do not put the harness decision object itself in `answer`. All decision fields must be present; use null for unused fields. For `code`, write a Python JSONL program without network or model access: read one input line and emit {\"kind\":\"result\",\"output\":object}. For `procedure`, choose a listed ID and provide `input_json` as a JSON object string matching its schema. For `llm_code`, write complete Python code: import json,sys; from action_sdk import ActionContext; ctx=ActionContext(json.loads(sys.stdin.readline())['input']); text=ctx.call_llm(prompt, instructions='', max_output_tokens=512); ctx.emit({'text':text}). Derive prompt from ctx.input. Never invent tool observations. Only choose a tool listed in `tools`; return a final answer when ready."""
 
 
 class AgentRunner:
@@ -43,7 +43,7 @@ class AgentRunner:
             try:
                 result = self.broker.call(episode_id, f"agent-decision-{index}", AGENT_INSTRUCTIONS,
                                           json.dumps(context, sort_keys=True), min(2048, available),
-                                          response_format=decision_format())
+                                          response_format=decision_format(enabled))
                 try:
                     decision = json.loads(result.text)
                 except json.JSONDecodeError as exc:
@@ -52,11 +52,15 @@ class AgentRunner:
                     raise ActionBenchError("Agent decision did not match the required envelope")
                 kind = decision["type"]
                 if kind == "final":
+                    if any(decision[field] is not None for field in ("code", "procedure_id", "input_json")):
+                        raise ActionBenchError("Final decision must leave tool fields null")
                     if not isinstance(decision["answer"], str) or not decision["answer"].strip():
                         raise ActionBenchError("Final decision needs a nonempty answer")
                     return decision["answer"]
                 if kind not in enabled:
                     raise ActionBenchError(f"Tool {kind} is unavailable in {condition}")
+                if decision["answer"] is not None:
+                    raise ActionBenchError("Tool decision must leave answer null")
                 try:
                     input_data = json.loads(decision["input_json"] or "{}")
                 except (TypeError, json.JSONDecodeError) as exc:
@@ -64,6 +68,8 @@ class AgentRunner:
                 if not isinstance(input_data, dict):
                     raise ActionBenchError("Tool input_json must encode an object")
                 if kind in {"code", "llm_code"}:
+                    if decision["procedure_id"] is not None:
+                        raise ActionBenchError("Code decision must leave procedure_id null")
                     if not isinstance(decision["code"], str) or not decision["code"].strip():
                         raise ActionBenchError(f"{kind} requires nonempty code")
                     if kind == "code":
@@ -73,6 +79,8 @@ class AgentRunner:
                     context["observations"].append({"tool": kind, "output": output})
                     continue
                 procedure_id = decision["procedure_id"]
+                if decision["code"] is not None:
+                    raise ActionBenchError("Procedure decision must leave code null")
                 known = {item.get("id") for item in catalog}
                 if kind != "procedure" or procedure_id not in known or not package_dir:
                     raise ActionBenchError(f"Unknown procedure: {procedure_id}")

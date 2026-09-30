@@ -166,7 +166,7 @@ def _integration_check(config, store) -> dict:
         if output.get("text", "").strip() != "OK": raise ActionBenchError(f"Integration probe returned {output!r}")
         decision = Broker(config, store).call(episode, "structured-decision-probe",
             "Return the required decision object. Choose final and put exactly OK in answer; use null for the other fields.",
-            "Complete the harness protocol check.", 128, response_format=decision_format())
+            "Complete the harness protocol check.", 128, response_format=decision_format([]))
         parsed = json.loads(decision.text)
         if parsed != {"type": "final", "answer": "OK", "code": None, "procedure_id": None, "input_json": None}:
             raise ActionBenchError(f"Structured decision probe returned {parsed!r}")

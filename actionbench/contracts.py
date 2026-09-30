@@ -10,12 +10,13 @@ def response_format(name: str, schema: dict) -> dict:
     return {"type": "json_schema", "name": name, "strict": True, "schema": schema}
 
 
-def decision_format() -> dict:
+def decision_format(tools: list[str] | None = None) -> dict:
     nullable_string = {"type": ["string", "null"]}
+    allowed = ["final", *(tools if tools is not None else ["code", "llm_code", "procedure"])]
     return response_format("agent_decision_v2", {
         "type": "object",
         "properties": {
-            "type": {"type": "string", "enum": ["final", "code", "llm_code", "procedure"]},
+            "type": {"type": "string", "enum": allowed},
             "answer": nullable_string,
             "code": nullable_string,
             "procedure_id": nullable_string,
