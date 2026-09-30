@@ -74,3 +74,10 @@ jobs:
         run: bash cloud/github_worker.sh
       - name: Verify request, answer, and grader recovery across runners
         run: python tools/checkpoint_probe.py verify
+      - name: Publish cross-runner checkpoint evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: actionbench-checkpoint-verification-${{ github.run_id }}
+          path: artifacts/checkpoint-probe-after.json
+          retention-days: 30
+          if-no-files-found: error
