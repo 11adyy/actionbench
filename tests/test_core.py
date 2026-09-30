@@ -149,6 +149,16 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(group["primary_with_failures_as_zero"], .1)
             self.assertEqual(group["execution_failed"], 9)
 
+    def test_unclassified_terminal_failure_invalidates_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            store.create_episode("e", config.campaign, "task", "code", "action", 0)
+            store.set_episode("e", "failed", error="Unexpected runtime error", retryable=False,
+                              failure_kind="unclassified_agent_error")
+            report = build_report(config, store)
+            self.assertEqual(report["validation_status"], "failed")
+            self.assertIn("technical_or_unclassified_episode_failures", report["validation_reasons"])
+
     def test_report_pairs_action_against_skill_by_task_and_replica(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d))

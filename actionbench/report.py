@@ -146,17 +146,18 @@ def build_report(config, store) -> dict:
     output["model_calls_by_phase"] = dict(phase_calls)
     package_failures = sum(item["failed"] for kind, item in package_creation.items() if kind in {"action", "skill_script"})
     missing_action = package_creation.get("action", {}).get("completed", 0) == 0
-    unclassified_failures = sum(group["failure_kinds"].get("unclassified_legacy", 0) for group in groups.values())
+    technical_failure_kinds = {"unclassified_legacy", "unclassified_agent_error", "harness_error", "grader_error", "infrastructure_error"}
+    technical_failures = sum(count for group in groups.values() for kind, count in group["failure_kinds"].items() if kind in technical_failure_kinds)
     scored_action = sum(group["completed"] for name, group in groups.items() if name.endswith(":action"))
     invocation_count = sum(item["invocations"] for item in output["procedure_usage"] if item["condition"] == "action")
     reasons = []
     if missing_action: reasons.append("no_action_package_created")
     if package_failures: reasons.append("procedure_package_creation_failed")
     if not scored_action: reasons.append("no_scored_action_episode")
-    if unclassified_failures: reasons.append("unclassified_episode_failures")
+    if technical_failures: reasons.append("technical_or_unclassified_episode_failures")
     if complete and not invocation_count: reasons.append("no_action_invocation_observed")
     output["execution_status"] = "terminal" if complete else ("blocked" if any(group["blocked"] for group in groups.values()) else "paused")
-    output["validation_status"] = "failed" if missing_action else ("inconclusive" if reasons or not complete else "passed")
+    output["validation_status"] = "failed" if missing_action or technical_failures else ("inconclusive" if reasons or not complete else "passed")
     output["validation_reasons"] = reasons
     output["scientific_status"] = "diagnostic_only" if output["validation_status"] != "passed" else ("confirmatory" if config.analysis.study_role == "confirmatory" else "exploratory")
     output["analysis_status"] = output["scientific_status"]
