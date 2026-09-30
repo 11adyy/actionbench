@@ -5,6 +5,7 @@ import gzip
 import json
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -15,7 +16,7 @@ from .contracts import decision_format
 from .errors import ActionBenchError, BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome
 from .grader import grade
 from .manifest import Manifest, load_manifest, verify_data
-from .runner import ActionRunner
+from .runner import ActionRunner, ContainerRunner
 from .skill_creator import create_package, _package_hash
 
 
@@ -87,6 +88,7 @@ def dispatch(args, config, store) -> int:
         if failures: raise ActionBenchError("\n".join(failures))
         harness_hash, image_hashes = _study_inputs(config, manifest)
         output = _smoke(manifest, config)
+        output["program_runner"] = _container_smoke(config)
         store.record_gate(config.campaign, "grader_smoke", manifest.fingerprint, harness_hash, image_hashes, output)
         print(json.dumps(output, indent=2)); return 0
     if args.command == "integration-check":
@@ -171,6 +173,27 @@ def _integration_check(config, store) -> dict:
         store.set_episode(episode, "failed", error=str(exc), retryable=False); raise
     return {"episode_id": episode, "action_output": output, "structured_decision": parsed,
             "provider_requests": store.conn.execute("SELECT COUNT(*) n FROM requests WHERE episode_id=? AND state='completed'", (episode,)).fetchone()["n"]}
+
+
+def _container_smoke(config) -> dict:
+    """Exercise the production Docker runner, including colon paths and read-only action mounts."""
+    with tempfile.TemporaryDirectory(prefix="actionbench-container-smoke-") as temp:
+        root = Path(temp)
+        action = root / "action:readonly"; action.mkdir()
+        (action / "main.py").write_text(
+            "import json,sys\nfrom pathlib import Path\n"
+            "message=json.loads(sys.stdin.readline())\n"
+            "try:\n Path('/action/write-denied').write_text('bad')\n readonly=False\n"
+            "except OSError:\n readonly=True\n"
+            "Path('/workspace/output.txt').write_text(message['input']['value'])\n"
+            "print(json.dumps({'kind':'result','output':{'value':Path('/workspace/output.txt').read_text(),'readonly':readonly}}),flush=True)\n"
+        )
+        runner = ContainerRunner(config, None)
+        result = runner.execute("smoke:colon", "docker-real", root / "workspace:colon", ["python", "/action/main.py"],
+                                {"value": "round-trip"}, action_dir=action)
+        if result != {"value": "round-trip", "readonly": True}:
+            raise InfrastructureError(f"Production container runner failed its real round trip: {result}")
+        return {"passed": True, "colon_path": True, "readonly_action": True, "jsonl_round_trip": True}
 
 
 def _smoke(manifest: Manifest, config) -> dict:
