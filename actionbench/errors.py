@@ -30,6 +30,10 @@ class ProviderOutputError(ActionBenchError):
     """Known, billed provider response that cannot be consumed as output."""
 
 
+class ProviderRejectedError(ActionBenchError):
+    """Known provider policy rejection; repeating the same payload is not recovery."""
+
+
 class AgentProtocolError(ActionBenchError):
     """The model's coordinator decision violates the frozen decision contract."""
 

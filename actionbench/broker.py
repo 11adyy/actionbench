@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import Config, api_key
-from .errors import BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, ProviderOutputError, UnknownProviderOutcome
+from .errors import BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, InfrastructureError, ProviderOutputError, ProviderRejectedError, UnknownProviderOutcome
 from .store import Store
 
 
@@ -48,6 +48,10 @@ class OpenAIResponsesClient:
             detail = exc.read().decode(errors="replace")[:1000]
             if exc.code >= 500:
                 raise UnknownProviderOutcome(f"Provider server error after submission ({exc.code}): {detail}") from exc
+            try: error_code = (json.loads(detail).get("error") or {}).get("code")
+            except (json.JSONDecodeError, AttributeError, TypeError): error_code = None
+            if exc.code == 400 and error_code == "invalid_prompt":
+                raise ProviderRejectedError(f"Provider rejected prompt ({exc.code}): {detail}") from exc
             raise InfrastructureError(f"Provider rejected request ({exc.code}): {detail}") from exc
         except urllib.error.URLError as exc:
             raise UnknownProviderOutcome(f"Network outcome is unknown: {exc.reason}") from exc
@@ -144,21 +148,19 @@ class Broker:
             if existing["state"] == "submitted":
                 self.store.unknown_request(existing["request_id"], "Coordinator restarted after request submission")
                 raise UnknownProviderOutcome(f"Request {request_key} was submitted before interruption and is unknown")
-            if existing["state"] in {"reserved", "rejected"}:
+            if existing["state"] == "rejected":
+                raise ProviderRejectedError(f"Request {request_key} was already rejected by the provider; do not resend the same payload")
+            if existing["state"] == "reserved":
                 # Reservation is durably committed before the API call. It is safe
                 # to continue it because no provider request has been sent yet.
-                if existing["state"] == "rejected":
-                    calls, inputs, outputs = self.store.episode_limits(episode_id)
-                    if calls >= self.config.budget.max_llm_calls or inputs + existing["reserved_input_tokens"] > self.config.budget.max_input_tokens or outputs + max_output_tokens > self.config.budget.max_output_tokens:
-                        raise BudgetExceeded("Reconciled request would exceed its episode budget")
-                    if self.store.campaign_spend(self.config.campaign) + existing["reserved_usd"] > self.store.budget_ceiling(self.config):
-                        raise CampaignBudgetExceeded("Reconciled request would exceed the campaign dollar ceiling")
                 request_id = existing["request_id"]
                 self.store.mark_submitted(request_id)
                 try:
                     raw = self.client.request(payload, timeout_seconds=timeout_seconds) if timeout_seconds is not None else self.client.request(payload)
                 except UnknownProviderOutcome as exc:
                     self.store.unknown_request(request_id, str(exc)); raise
+                except ProviderRejectedError as exc:
+                    self.store.reject_request(request_id, str(exc)); raise
                 except (ConfigurationError, InfrastructureError) as exc:
                     self.store.reject_request(request_id, str(exc)); raise
                 return self._checked_result(self._complete(request_id, raw))
@@ -186,6 +188,9 @@ class Broker:
             raw = self.client.request(payload, timeout_seconds=timeout_seconds) if timeout_seconds is not None else self.client.request(payload)
         except UnknownProviderOutcome as exc:
             self.store.unknown_request(request_id, str(exc))
+            raise
+        except ProviderRejectedError as exc:
+            self.store.reject_request(request_id, str(exc))
             raise
         except (ConfigurationError, InfrastructureError) as exc:
             self.store.reject_request(request_id, str(exc))

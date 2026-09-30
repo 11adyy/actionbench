@@ -17,7 +17,7 @@ from jsonschema.exceptions import ValidationError
 from .agent import AgentRunner
 from .broker import Broker
 from .contracts import decision_format
-from .errors import ActionBenchError, AgentProtocolError, BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, GeneratedProgramError, InfrastructureError, ProviderOutputError, UnknownProviderOutcome
+from .errors import ActionBenchError, AgentProtocolError, BudgetExceeded, CampaignBudgetExceeded, ConfigurationError, GeneratedProgramError, InfrastructureError, ProviderOutputError, ProviderRejectedError, UnknownProviderOutcome
 from .grader import grade
 from .manifest import Manifest, load_manifest, verify_data
 from .runner import ActionRunner, ContainerRunner
@@ -392,6 +392,7 @@ def _agent_failure_kind(exc: ActionBenchError) -> str:
     if isinstance(exc, AgentProtocolError): return "protocol_error"
     if isinstance(exc, GeneratedProgramError): return "generated_program_failed"
     if isinstance(exc, ProviderOutputError): return "provider_output_invalid"
+    if isinstance(exc, ProviderRejectedError): return "provider_rejected"
     return "unclassified_agent_error"
 
 
@@ -448,7 +449,7 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                         target = base / family.id / str(replica) / kind / f"v{revision}"
                         try:
                             package_hash = create_package(broker, episode, family, replica, kind, target, feedback, base_skill_md, revision=revision, previous_package=last_path)
-                        except (CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome): raise
+                        except (CampaignBudgetExceeded, ConfigurationError, InfrastructureError, UnknownProviderOutcome, ProviderRejectedError): raise
                         except ActionBenchError as exc:
                             last_creation_failure_kind = "creation_budget_exhausted" if isinstance(exc, BudgetExceeded) else "package_creation_failed"
                             feedback = [{"generation_error": str(exc)}]
@@ -471,7 +472,8 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                 except (ConfigurationError, InfrastructureError, CampaignBudgetExceeded) as exc:
                     store.set_episode(episode, "queued", error=str(exc)); raise
                 except ActionBenchError as exc:
-                    store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind=last_creation_failure_kind)
+                    kind = "provider_rejected" if isinstance(exc, ProviderRejectedError) else last_creation_failure_kind
+                    store.set_episode(episode, "failed", error=str(exc), retryable=False, failure_kind=kind)
                     continue
                 except Exception as exc:
                     store.set_episode(episode, "failed", error=str(exc), retryable=True); raise

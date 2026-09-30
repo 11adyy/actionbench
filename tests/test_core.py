@@ -11,7 +11,7 @@ from actionbench.cli import campaign_lock
 from actionbench.config import load_config
 from actionbench.design import plan_sample
 from actionbench.broker import Broker
-from actionbench.errors import ActionBenchError, InfrastructureError, ProviderOutputError, UnknownProviderOutcome
+from actionbench.errors import ActionBenchError, InfrastructureError, ProviderOutputError, ProviderRejectedError, UnknownProviderOutcome
 from actionbench.grader import grade
 from actionbench.report import build_report
 from actionbench.runner import ActionRunner, ContainerRunner
@@ -119,6 +119,21 @@ class CoreTests(unittest.TestCase):
             saved = store.conn.execute("SELECT state,provider_request_id,response_json FROM requests").fetchone()
             self.assertEqual((saved["state"], saved["provider_request_id"]), ("unknown_outcome", "provider-known"))
             self.assertEqual(json.loads(saved["response_json"]), raw)
+
+    def test_known_policy_rejection_is_never_resent_on_resume(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "action", 0)
+            broker = Broker(config, store)
+            class Client:
+                calls = 0
+                def request(self, payload):
+                    self.calls += 1
+                    raise ProviderRejectedError("invalid_prompt")
+            broker.client = Client()
+            for _ in range(2):
+                with self.assertRaises(ProviderRejectedError): broker.call("e", "k", "i", "x", 4)
+            self.assertEqual(broker.client.calls, 1)
+            self.assertEqual(store.conn.execute("SELECT state FROM requests").fetchone()[0], "rejected")
 
     def test_generated_procedure_underscores_and_paired_skill(self):
         with tempfile.TemporaryDirectory() as d:

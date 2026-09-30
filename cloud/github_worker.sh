@@ -5,6 +5,17 @@ mkdir -p .cloud-state artifacts
 cfg=experiment.json
 manifest=manifests/study.json
 
+finalize_state() {
+  local code=$?
+  trap - EXIT
+  if [ "${AB_ACTION:-}" != smoke ] && [ "${AB_CHECKPOINT_TEST:-}" != 1 ] && [ -s "$cfg" ] && [ -s artifacts/actionbench-v3.sqlite3 ]; then
+    python -m actionbench.cli status --config "$cfg" > artifacts/status.json || echo 'Could not publish status.json' >&2
+    python -m actionbench.cli report --config "$cfg" --out artifacts/report.json > /dev/null || echo 'Could not publish report.json' >&2
+  fi
+  exit "$code"
+}
+trap finalize_state EXIT
+
 if [ "$AB_ACTION" = start ] || [ "$AB_ACTION" = canary ]; then
   if [ "${AB_CHECKPOINT_TEST:-}" = 1 ]; then
     cp config.example.json experiment.json
