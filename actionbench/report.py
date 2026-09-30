@@ -18,7 +18,12 @@ def build_report(config, store) -> dict:
     groups = defaultdict(lambda: {"planned": 0, "completed": 0, "execution_failed": 0, "pending": 0, "blocked": 0, "scored": [], "costs": [], "terminal_costs": [], "terminal_seconds": [], "terminal_calls": [], "uncertain_requests": 0, "failure_kinds": defaultdict(int)})
     creation = defaultdict(lambda: {"episodes": 0, "completed": 0, "failed": 0, "total_usd": 0.0})
     creation_costs = defaultdict(float)
+    phase_costs = defaultdict(float)
+    phase_calls = defaultdict(int)
     for row in rows:
+        phase = "controls" if row["family"] == "integration" else ("development" if row["task_id"].startswith("creation-dev:") else ("package_creation" if row["task_id"].startswith("creation:") else "test"))
+        phase_costs[phase] += float(row["cost"])
+        phase_calls[phase] += int(row["model_calls"] or 0)
         if row["family"] == "integration": continue
         if row["task_id"].startswith("creation"):
             key = f"{row['family']}:{row['condition']}:{row['replica']}"
@@ -137,6 +142,8 @@ def build_report(config, store) -> dict:
                                   WHERE e.campaign=? AND e.family!='integration' AND e.task_id NOT LIKE 'creation%'
                                   GROUP BY e.family,e.condition,ar.action_id""", (config.campaign,)).fetchall()
     output["procedure_usage"] = [dict(row) for row in usage]
+    output["model_cost_by_phase_usd"] = dict(phase_costs)
+    output["model_calls_by_phase"] = dict(phase_calls)
     package_failures = sum(item["failed"] for kind, item in package_creation.items() if kind in {"action", "skill_script"})
     missing_action = package_creation.get("action", {}).get("completed", 0) == 0
     unclassified_failures = sum(group["failure_kinds"].get("unclassified_legacy", 0) for group in groups.values())

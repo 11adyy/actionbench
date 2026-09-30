@@ -302,4 +302,12 @@ class Store:
         update = self.conn.execute("SELECT MAX(ceiling_usd) ceiling FROM budget_updates WHERE campaign=?", (campaign,)).fetchone()["ceiling"]
         ceiling = max(float(configured), float(update)) if update is not None else float(configured)
         spent = self.campaign_spend(campaign)
-        return {"campaign": campaign, "exists": True, "status": row["status"], "episodes": {r["status"]: r["n"] for r in counts}, "accounted_usd": spent, "budget_ceiling_usd": ceiling, "budget_overrun_usd": max(0, spent-ceiling), "manifest_hash": binding["manifest_hash"] if binding else None}
+        cost = self.conn.execute("""SELECT
+            COALESCE(SUM(CASE WHEN r.state='completed' THEN r.actual_usd ELSE 0 END),0) confirmed,
+            COALESCE(SUM(CASE WHEN r.state IN ('reserved','submitted','unknown_outcome') THEN r.reserved_usd ELSE 0 END),0) reserved,
+            COALESCE(SUM(CASE WHEN r.state='unknown_outcome' THEN 1 ELSE 0 END),0) unknown_requests
+            FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=?""", (campaign,)).fetchone()
+        return {"campaign": campaign, "exists": True, "status": row["status"], "episodes": {r["status"]: r["n"] for r in counts},
+                "accounted_usd": spent, "confirmed_usd": float(cost["confirmed"]), "reserved_or_uncertain_usd": float(cost["reserved"]),
+                "unknown_provider_requests": int(cost["unknown_requests"]), "budget_ceiling_usd": ceiling,
+                "budget_overrun_usd": max(0, spent-ceiling), "manifest_hash": binding["manifest_hash"] if binding else None}
