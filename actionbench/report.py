@@ -57,6 +57,16 @@ def build_report(config, store) -> dict:
     for item in package_creation.values():
         item["failure_rate"] = item["failed"] / item["attempted"] if item["attempted"] else None
     output = {"campaign": config.campaign, "analysis_status": "complete" if complete else "provisional", "planned_test_episodes": binding["planned_test_episodes"] if binding else None, "groups": {}, "package_creation": dict(package_creation), "skill_creation": dict(creation), "status": store.campaign_status(config.campaign)}
+    def preparation_cost(family: str, condition: str, replica: int) -> float:
+        if condition == "plain": return 0.0
+        paired_skill = creation_costs[(family, "skill", replica)]
+        return paired_skill if condition in {"skill", "improvised"} else paired_skill + creation_costs[(family, condition, replica)]
+
+    output["policy_preparation_usd_by_replica"] = {
+        f"{family}:{condition}:{replica}": preparation_cost(family, condition, replica)
+        for family, condition, replica in sorted({(row["family"], row["condition"], row["replica"])
+                                                  for row in rows if row["family"] != "integration" and not row["task_id"].startswith("creation")})
+    }
     for name, group in sorted(groups.items()):
         scored_total = sum(group["scored"])
         output["groups"][name] = {
@@ -94,14 +104,13 @@ def build_report(config, store) -> dict:
             salt = int(hashlib.sha256(f"{config.campaign}|{family}|{baseline}".encode()).hexdigest()[:8], 16)
             quality_cells = {(task, replica): (action[0], other[0]) for task, pairs in tasks.items() for replica, (action, other) in pairs}
             cost_cells = {(task, replica): (action[1], other[1]) for task, pairs in tasks.items() for replica, (action, other) in pairs}
-            baseline_creation = "skill_script" if baseline == "skill_script" else None
             uses = config.analysis.amortization_uses
             total_cost_cells = {(task, replica): (
-                action[1] + creation_costs[(family, "action", replica)] / uses,
-                other[1] + (creation_costs[(family, baseline_creation, replica)] / uses if baseline_creation else 0.0))
+                action[1] + preparation_cost(family, "action", replica) / uses,
+                other[1] + preparation_cost(family, baseline, replica) / uses)
                 for task, pairs in tasks.items() for replica, (action, other) in pairs}
             mean_runtime_delta = sum(action[1] - other[1] for pairs in tasks.values() for _, (action, other) in pairs) / sum(len(pairs) for pairs in tasks.values())
-            per_replica_creation = [creation_costs[(family, "action", replica)] - (creation_costs[(family, baseline_creation, replica)] if baseline_creation else 0.0) for replica in replicas[family]]
+            per_replica_creation = [preparation_cost(family, "action", replica) - preparation_cost(family, baseline, replica) for replica in replicas[family]]
             mean_creation_delta = sum(per_replica_creation) / len(per_replica_creation) if per_replica_creation else 0.0
             break_even = None if mean_runtime_delta >= 0 else max(0, int(math.ceil(mean_creation_delta / -mean_runtime_delta)))
             quality = crossed_paired_bootstrap(quality_cells, salt)

@@ -159,6 +159,31 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(report["validation_status"], "failed")
             self.assertIn("technical_or_unclassified_episode_failures", report["validation_reasons"])
 
+    def test_policy_preparation_includes_paired_skill_and_development(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            for episode, task_id, condition, cost in (
+                ("skill-create", "creation:f:skill:0", "skill", 0.02),
+                ("skill-dev", "creation-dev:f:skill:0:0:d", "skill", 0.03),
+                ("action-create", "creation:f:action:0", "action", 0.04),
+                ("action-dev", "creation-dev:f:action:0:0:d", "action", 0.05),
+            ):
+                store.create_episode(episode, config.campaign, task_id, "f", condition, 0)
+                store.reserve_request(episode + "-r", episode, "call", "hash", {}, cost, 100)
+                store.mark_submitted(episode + "-r")
+                store.complete_request(episode + "-r", "provider", {"status": "completed"},
+                                       {"input_tokens": 1, "cached_input_tokens": 0, "cache_write_tokens": 0, "output_tokens": 1}, cost)
+            for condition in ("plain", "skill", "improvised", "action"):
+                episode = f"test-{condition}"
+                store.create_episode(episode, config.campaign, "task", "f", condition, 0)
+                store.save_evaluation(episode, "f", {"primary": 0.5})
+                store.set_episode(episode, "completed", retryable=False)
+            prep = build_report(config, store)["policy_preparation_usd_by_replica"]
+            self.assertAlmostEqual(prep["f:plain:0"], 0)
+            self.assertAlmostEqual(prep["f:skill:0"], 0.05)
+            self.assertAlmostEqual(prep["f:improvised:0"], 0.05)
+            self.assertAlmostEqual(prep["f:action:0"], 0.14)
+
     def test_report_pairs_action_against_skill_by_task_and_replica(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d))
