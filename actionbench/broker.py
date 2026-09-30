@@ -129,7 +129,7 @@ class Broker:
         if any(content.get("type") == "refusal" for item in raw.get("output", [])
                if isinstance(item, dict) for content in item.get("content", []) if isinstance(content, dict)):
             if result.request_id: self.store.mark_output_validation(result.request_id, "invalid")
-            raise ProviderOutputError(f"Provider response {result.provider_request_id} contains a refusal")
+            raise ProviderRejectedError(f"Provider response {result.provider_request_id} contains a refusal")
         if result.request_id: self.store.mark_output_validation(result.request_id, "provider_complete")
         return result
 

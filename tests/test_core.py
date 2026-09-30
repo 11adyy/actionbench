@@ -119,6 +119,24 @@ class CoreTests(unittest.TestCase):
             row = store.conn.execute("SELECT state,actual_usd,incomplete_reason,output_validation FROM requests").fetchone()
             self.assertEqual(tuple(row), ("completed", 0.0, "content_filter", "invalid"))
 
+    def test_provider_refusal_is_terminal_and_not_retried(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "action", 0)
+            raw = {"id": "refused", "status": "completed", "usage": {"input_tokens": 20, "output_tokens": 3},
+                   "output": [{"type": "message", "role": "assistant", "content": [{"type": "refusal", "refusal": "Cannot comply"}]}]}
+            broker = Broker(config, store)
+            class Client:
+                calls = 0
+                def request(self, payload):
+                    self.calls += 1
+                    return raw
+            broker.client = Client()
+            for _ in range(2):
+                with self.assertRaises(ProviderRejectedError): broker.call("e", "k", "i", "x", 4)
+            self.assertEqual(broker.client.calls, 1)
+            row = store.conn.execute("SELECT state,output_validation FROM requests").fetchone()
+            self.assertEqual(tuple(row), ("completed", "invalid"))
+
     def test_broker_uses_explicit_final_answer_not_commentary(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("e", config.campaign, "t", "f", "action", 0)
