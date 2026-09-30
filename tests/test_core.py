@@ -15,12 +15,26 @@ from actionbench.errors import ActionBenchError, InfrastructureError, ProviderOu
 from actionbench.grader import grade
 from actionbench.report import build_report
 from actionbench.runner import ActionRunner, ContainerRunner
-from actionbench.skill_creator import create_package, _validate_procedure
+from actionbench.skill_creator import create_package, _development_prompt_examples, _validate_procedure
 from actionbench.store import Store
 from actionbench.statistics import crossed_paired_bootstrap
 
 
 class CoreTests(unittest.TestCase):
+    def test_creator_uses_complete_deterministic_development_subset(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            tasks = []
+            for task_id, size in (("long", 12000), ("medium", 5100), ("short", 3900), ("test", 10)):
+                path = root / f"{task_id}.json"
+                path.write_text("x" * size)
+                tasks.append(SimpleNamespace(id=task_id, split="test" if task_id == "test" else "development", public_input=path))
+            family = SimpleNamespace(id="qa", tasks=tuple(tasks))
+            selected = _development_prompt_examples(family)
+            self.assertEqual([item["task_id"] for item in selected], ["short", "medium"])
+            self.assertEqual([len(item["public_input"]) for item in selected], [3900, 5100])
+            self.assertLessEqual(sum(len(item["public_input"].encode()) for item in selected), 10000)
+
     def make(self, root: Path, campaign="c"):
         raw = json.loads((Path(__file__).parents[1] / "config.example.json").read_text())
         raw.update({"campaign": campaign, "dataset_root": "data", "artifact_root": "artifacts"})

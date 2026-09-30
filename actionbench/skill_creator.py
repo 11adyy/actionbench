@@ -19,10 +19,34 @@ from .manifest import Family
 
 BASE = """Create reusable instructions or narrow procedures for a benchmark family. Use only development examples; never include their answers or hidden test answers. Do not use network, credentials, shell commands, subprocesses, or external packages. Procedure IDs must match ^[A-Za-z][A-Za-z0-9_-]{0,63}$."""
 SKILL_PROMPT = BASE + """ Return skill_md as useful operational instructions. The agent has a sandboxed Python code tool but no direct model-call tool."""
-SCRIPT_PROMPT = BASE + """ Return one or two narrow deterministic procedures; the paired skill is supplied by the harness. Each procedure has id, description, input_schema_json (a JSON Schema object serialized as a string), and complete Python code. The program reads one JSON line with an input object and emits one JSON line with kind=result and an output object. It may not import action_sdk or request an LLM. Do not write an entire agent loop."""
-ACTION_PROMPT = BASE + """ Return one or two narrow reusable procedures; the paired skill is supplied by the harness. Each procedure has id, description, input_schema_json (a JSON Schema object serialized as a string), and complete Python code. Use `from action_sdk import ActionContext`; read one JSON input line; construct ctx = ActionContext(message['input']); make at least one controlled ctx.call_llm(prompt, instructions='', max_output_tokens=1024) on a normal valid input; finish with ctx.emit(object). The call must help perform the procedure. Do not write an entire agent loop."""
+SCRIPT_PROMPT = BASE + """ Return one narrow deterministic procedure; the paired skill is supplied by the harness. Each procedure has id, description, input_schema_json (a JSON Schema object serialized as a string), and complete Python code. Keep the code concise and focused on one useful subtask. The program reads one JSON line with an input object and emits one JSON line with kind=result and an output object. It may not import action_sdk or request an LLM. Do not write an entire agent loop."""
+ACTION_PROMPT = BASE + """ Return one narrow reusable procedure; the paired skill is supplied by the harness. Each procedure has id, description, input_schema_json (a JSON Schema object serialized as a string), and complete Python code. Keep the code concise and focused on one useful subtask. Use `from action_sdk import ActionContext`; read one JSON input line; construct ctx = ActionContext(message['input']); make at least one controlled ctx.call_llm(prompt, instructions='', max_output_tokens=1024) on a normal valid input; finish with ctx.emit(object). The call must help perform the procedure. Do not write an entire agent loop."""
 
 PROCEDURE_ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}\Z")
+DEVELOPMENT_PROMPT_BYTES = 10_000
+
+
+def _development_prompt_examples(family: Family) -> list[dict]:
+    """Choose complete public examples once, identically for every package kind.
+
+    Long QA contexts previously consumed most of the creator's episode token
+    budget on every revision. Shortest-first selection is deterministic and
+    does not inspect references, grades, or hidden test tasks.
+    """
+    candidates = [(task.id, task.public_input.read_text()) for task in getattr(family, "tasks", ()) if task.split == "development"]
+    if not candidates:
+        return []
+    candidates.sort(key=lambda item: (len(item[1].encode()), item[0]))
+    selected: list[dict] = []
+    total = 0
+    for task_id, content in candidates:
+        size = len(content.encode())
+        if total + size <= DEVELOPMENT_PROMPT_BYTES:
+            selected.append({"task_id": task_id, "public_input": content})
+            total += size
+    if not selected:
+        raise ActionBenchError(f"No complete development example for {family.id} fits the creator context budget")
+    return selected
 
 
 def _decode(text: str, kind: str) -> dict:
@@ -78,7 +102,7 @@ def _package_hash(destination: Path) -> str:
 
 def create_package(broker: Broker, episode_id: str, family: Family, replica: int, kind: str, destination: Path, feedback: list[dict] | None = None, base_skill_md: str | None = None, *, revision: int = 0, previous_package: Path | None = None) -> str:
     demos = [{"path": str(path), "content": path.read_text() if path.is_file() else "directory"} for path in family.demonstrations]
-    development = [{"task_id": task.id, "public_input": task.public_input.read_text()} for task in getattr(family, "tasks", ()) if task.split == "development"]
+    development = _development_prompt_examples(family)
     previous = None
     if previous_package:
         previous = {file.relative_to(previous_package).as_posix(): file.read_text()[:12000] for file in previous_package.rglob("*") if file.is_file() and file.name in {"SKILL.md", "main.py", "procedure.json"}}
@@ -95,7 +119,7 @@ def create_package(broker: Broker, episode_id: str, family: Family, replica: int
     if available < 512:
         raise BudgetExceeded(f"Creation output budget exhausted before revision {revision}")
     result = broker.call(episode_id, f"package-{kind}-draft-{revision}", instructions, prompt,
-                         min(4096, available), response_format=package_format(kind))
+                         min(6000, available), response_format=package_format(kind))
     try:
         package = _decode(result.text, kind)
         if kind in {"skill_script", "action"}:

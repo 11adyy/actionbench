@@ -48,6 +48,10 @@ This gives three direct comparisons: `action - skill` tests the full proposal; `
 
 `datasets prepare` builds a seeded study with the official EvalPlus MBPP+ v0.1.0 prompts and HotpotQA distractor data, including development and test splits. It records source URLs and SHA-256 hashes in `data/dataset-lock.json`. The MBPP+ image runs EvalPlus and checks that the public prompt exactly matches its official task; the HotpotQA image runs a pinned revision of its official evaluator. Reference material is mounted only into the grader container. Preparing the dataset again replaces the manifest, so finish preparation before creating a campaign.
 
+Package creation receives complete public development examples selected deterministically by shortest byte length (task ID breaks ties), up to 10,000 bytes total, identically for skill, skill_script, and action. Test examples and grader references are never included. All development tasks remain available for package-selection grading. This prompt cap prevents long QA contexts from exhausting the creator's episode budget on every revision; changing it changes the harness fingerprint and requires a new campaign.
+
+The example configuration allows up to 18,000 output tokens per episode; each package draft is capped at 6,000. This leaves room for three separately charged revisions when generation fails. The limits apply to all conditions and remain bounded by the campaign dollar ceiling.
+
 ## Safety and recovery
 
 Generated code runs with no network, credentials, or Docker socket, under resource limits and in a separate workspace for each attempt. The broker alone owns API credentials. A completed request can be reused only when its complete payload hash matches; a changed prompt produces a new request. Unknown provider outcomes are never retried automatically. Package writes use an atomic staging directory, and the ledger verifies package and saved-answer hashes before reuse. Each development evaluation has its own durable episode and budget, so a stopped creation run can resume without silently reusing a shared budget.
