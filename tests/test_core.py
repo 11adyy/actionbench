@@ -6,12 +6,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from actionbench.agent import AgentRunner
-from actionbench.commands import _bind_study, _creation_episode, _development_episode, _execute, _plan_test_episodes, _read_saved_answer, _validate_on_development, _verified_package
+from actionbench.commands import _bind_study, _creation_episode, _development_episode, _execute, _plan_test_episodes, _probe_package_procedures, _read_saved_answer, _validate_on_development, _verified_package
 from actionbench.cli import campaign_lock
 from actionbench.config import load_config
 from actionbench.design import plan_sample
 from actionbench.broker import Broker
-from actionbench.errors import ActionBenchError, InfrastructureError, ProviderOutputError, ProviderRejectedError, ResumeConflict, UnknownProviderOutcome
+from actionbench.errors import ActionBenchError, GeneratedProgramError, InfrastructureError, ProviderOutputError, ProviderRejectedError, ResumeConflict, UnknownProviderOutcome
 from actionbench.grader import grade
 from actionbench.report import build_report
 from actionbench.runner import ActionRunner, ContainerRunner
@@ -21,6 +21,29 @@ from actionbench.statistics import crossed_paired_bootstrap
 
 
 class CoreTests(unittest.TestCase):
+    def test_generated_procedure_probe_rejects_broken_protocol_and_resumes_without_rerun(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); config, store = self.make(root)
+            public = root / "public.json"; public.write_text(json.dumps({"prompt": "Do task", "entry_point": "solve"}))
+            family = SimpleNamespace(id="mbppplus", tasks=[SimpleNamespace(id="dev", split="development", public_input=public)])
+            package = root / "package"; procedure_dir = package / "procedures" / "contract"; procedure_dir.mkdir(parents=True)
+            (procedure_dir / "procedure.json").write_text(json.dumps({"id": "contract", "input_schema": {
+                "type": "object", "properties": {"entry_point": {"type": "string"}}, "required": ["entry_point"]}}))
+            class BrokenTools:
+                calls = 0
+                def run(self, episode, path, invocation_key, input_data, *, allow_llm):
+                    self.calls += 1
+                    assert input_data == {"entry_point": "solve"}
+                    raise GeneratedProgramError("KeyError: entry_point in input envelope")
+            tools = BrokenTools()
+            for _ in range(2):
+                feedback = _probe_package_procedures(config, store, family, 0, 0, "skill_script", package, tools)
+                self.assertEqual(feedback[0]["procedure_id"], "contract")
+                self.assertIn("entry_point", feedback[0]["probe_error"])
+            self.assertEqual(tools.calls, 1)
+            row = store.conn.execute("SELECT status,failure_kind FROM episodes WHERE task_id LIKE 'creation-probe:%'").fetchone()
+            self.assertEqual(tuple(row), ("failed", "generated_program_failed"))
+
     def test_creator_uses_complete_deterministic_development_subset(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

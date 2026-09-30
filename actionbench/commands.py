@@ -418,6 +418,54 @@ def _creation_episode(config, family: str, replica: int, kind: str) -> str:
     return _id(config.campaign, "creation", family, replica, kind)
 
 
+def _probe_package_procedures(config, store, family, replica: int, revision: int, kind: str,
+                              package: Path, tools: ActionRunner) -> list[dict]:
+    """Run every generated procedure through the production Docker/broker path on development input."""
+    if kind == "skill": return []
+    task = next((item for item in family.tasks if item.split == "development"), None)
+    if task is None: raise ActionBenchError(f"No development task can probe {family.id}")
+    public = json.loads(task.public_input.read_text())
+    feedback = []
+    for procedure_file in sorted(package.glob("procedures/*/procedure.json")):
+        procedure = json.loads(procedure_file.read_text())
+        episode = _id(config.campaign, "creation-probe", family.id, replica, revision, kind, procedure["id"])
+        store.create_episode(episode, config.campaign,
+                             f"creation-probe:{family.id}:{kind}:{replica}:{revision}:{procedure['id']}",
+                             family.id, kind, replica)
+        existing = store.episode(episode)
+        if existing["status"] == "blocked":
+            raise UnknownProviderOutcome(f"Procedure probe {episode} has an unresolved provider outcome")
+        if existing["status"] == "failed" and not existing["retryable"]:
+            feedback.append({"procedure_id": procedure["id"], "probe_error": existing["error"]})
+            continue
+        if existing["status"] != "completed":
+            store.set_episode(episode, "running")
+            try:
+                input_data = _sample_procedure_input(procedure["input_schema"], public)
+                tools.run(episode, procedure_file.parent, "development-probe", input_data,
+                          allow_llm=kind == "action")
+                calls = store.conn.execute("SELECT COUNT(*) FROM requests WHERE episode_id=? AND state='completed'", (episode,)).fetchone()[0]
+                if kind == "action" and calls < 1:
+                    raise GeneratedProgramError(f"Action {procedure['id']} made no brokered model call on development input")
+                store.set_episode(episode, "completed", retryable=False)
+            except UnknownProviderOutcome as exc:
+                store.set_episode(episode, "blocked", error=str(exc), retryable=False,
+                                  failure_kind="provider_outcome_unknown")
+                raise
+            except (CampaignBudgetExceeded, InfrastructureError, ConfigurationError) as exc:
+                store.set_episode(episode, "queued", error=str(exc))
+                raise
+            except ProviderRejectedError as exc:
+                store.set_episode(episode, "failed", error=str(exc), retryable=False,
+                                  failure_kind="provider_rejected")
+                raise
+            except (ActionBenchError, ValueError) as exc:
+                store.set_episode(episode, "failed", error=str(exc), retryable=False,
+                                  failure_kind="generated_program_failed")
+                feedback.append({"procedure_id": procedure["id"], "probe_error": str(exc)[:1000]})
+    return feedback
+
+
 def _create_packages(config, store, manifest: Manifest) -> None:
     if not manifest.development_tasks: raise ActionBenchError("A real study needs held-out development tasks for package creation")
     broker = Broker(config, store); tools = ActionRunner(config, broker); agent = AgentRunner(broker, tools)
@@ -458,6 +506,13 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                             store.event(episode, "package_revision_rejected", {"kind": kind, "revision": revision, "error": str(exc)[:1000]})
                             continue
                         store.event(episode, "package_revision_created", {"kind": kind, "revision": revision, "hash": package_hash})
+                        probe_feedback = _probe_package_procedures(config, store, family, replica, revision, kind, target, tools)
+                        if probe_feedback:
+                            feedback = probe_feedback
+                            last_path = target
+                            store.event(episode, "package_revision_rejected", {"kind": kind, "revision": revision,
+                                                                                 "probe_feedback": probe_feedback})
+                            continue
                         feedback = _validate_on_development(config, store, family.id, replica, revision, dev_tasks, agent, kind, target)
                         last_path = target
                         candidate_score = sum(item["primary"] for item in feedback) / len(feedback)
@@ -465,7 +520,7 @@ def _create_packages(config, store, manifest: Manifest) -> None:
                             final_path, final_hash, best_score = target, package_hash, candidate_score
                         if all(item["primary"] >= 1 for item in feedback): break
                     if not final_path or not final_hash:
-                        cause = feedback[0].get("generation_error", "no structurally valid revision") if feedback else "no structurally valid revision"
+                        cause = (feedback[0].get("generation_error") or feedback[0].get("probe_error") or "no executable revision") if feedback else "no executable revision"
                         raise ActionBenchError(f"No valid {kind} package was produced for {family.id} replica {replica}: {cause}")
                     store.save_package(config.campaign, family.id, replica, kind, final_hash, str(final_path), episode)
                     store.set_episode(episode, "completed")

@@ -21,7 +21,7 @@ def build_report(config, store) -> dict:
     phase_costs = defaultdict(float)
     phase_calls = defaultdict(int)
     for row in rows:
-        phase = "controls" if row["family"] == "integration" else ("development" if row["task_id"].startswith("creation-dev:") else ("package_creation" if row["task_id"].startswith("creation:") else "test"))
+        phase = "controls" if row["family"] == "integration" else ("development" if row["task_id"].startswith(("creation-dev:", "creation-probe:")) else ("package_creation" if row["task_id"].startswith("creation:") else "test"))
         phase_costs[phase] += float(row["cost"])
         phase_calls[phase] += int(row["model_calls"] or 0)
         if row["family"] == "integration": continue
@@ -62,7 +62,7 @@ def build_report(config, store) -> dict:
     for row in store.conn.execute("""SELECT e.family,e.task_id,r.state,r.incomplete_reason FROM requests r
                                    JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=?
                                    AND (r.state='policy_rejected' OR r.incomplete_reason='content_filter')""", (config.campaign,)):
-        phase = "controls" if row["family"] == "integration" else ("development" if row["task_id"].startswith("creation-dev:") else ("package_creation" if row["task_id"].startswith("creation:") else "test"))
+        phase = "controls" if row["family"] == "integration" else ("development" if row["task_id"].startswith(("creation-dev:", "creation-probe:")) else ("package_creation" if row["task_id"].startswith("creation:") else "test"))
         policy_events[phase] += 1
         if phase == "test": policy_test_by_family[row["family"]] += 1
     output["provider_policy_events_by_phase"] = dict(policy_events)
