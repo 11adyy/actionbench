@@ -5,10 +5,9 @@ mkdir -p .cloud-state
 case "${1:-}" in
   restore)
     [[ "$AB_CAMPAIGN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || { echo 'Invalid campaign ID' >&2; exit 2; }
-    prefix="actionbench-state-${AB_CAMPAIGN}-"
     artifact_id=''
     if [ "$AB_ACTION" != smoke ]; then
-      artifact_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq ".artifacts | map(select(.expired == false and (.name | startswith(\"$prefix\")))) | sort_by(.created_at) | last | .id // empty")
+      artifact_id=$(python cloud/find_state_artifact.py)
     fi
     if [ "$AB_ACTION" = resume ] || [ "$AB_ACTION" = raise-budget ]; then
       [ -n "$artifact_id" ] || { echo 'No saved campaign artifact exists to resume' >&2; exit 2; }

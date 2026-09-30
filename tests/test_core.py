@@ -125,6 +125,49 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(comparison["quality"]["n"], 1)
             self.assertEqual(comparison["quality"]["mean_delta"], 1)
 
+    def test_missing_action_package_does_not_become_a_cost_saving_claim(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            for condition in ("skill", "action"):
+                episode = f"test-{condition}"
+                store.create_episode(episode, config.campaign, "task", "f", condition, 0)
+                store.set_episode(episode, "failed", error="Required action package could not be created", retryable=False,
+                                  failure_kind="package_unavailable")
+            store.bind_study(config.campaign, "manifest", "harness", {"image": "digest"}, 2)
+            report = build_report(config, store)
+            comparison = report["paired_comparisons"]["f:action_minus_skill"]
+            self.assertEqual(report["scientific_status"], "diagnostic_only")
+            self.assertFalse(comparison["interpretable"])
+            self.assertIsNone(comparison["observed_cost_saving_at_nonnegative_quality"])
+            self.assertIsNone(comparison["amortization"])
+            store.conn.execute("UPDATE campaigns SET status='frozen' WHERE campaign=?", (config.campaign,))
+            with self.assertRaises(ActionBenchError): plan_sample(config, store, "f", "skill", .1, .1)
+
+    def test_valid_but_worse_action_is_preserved_as_negative_result(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, store = self.make(Path(d))
+            for replica in range(3):
+                creation = f"create-{replica}"
+                store.create_episode(creation, config.campaign, f"creation:f:action:{replica}", "f", "action", replica)
+                store.set_episode(creation, "completed", retryable=False)
+                store.save_package(config.campaign, "f", replica, "action", f"h-{replica}", f"/tmp/p-{replica}", creation)
+            for task in range(10):
+                for replica in range(3):
+                    for condition, score in (("skill", 1), ("action", 0)):
+                        episode = f"{condition}-{task}-{replica}"
+                        store.create_episode(episode, config.campaign, f"task-{task}", "f", condition, replica)
+                        store.save_evaluation(episode, "f", {"primary": score})
+                        store.set_episode(episode, "completed", retryable=False)
+            store.create_action_run("action-run", "action-0-0", "step", "procedure", "hash", "/tmp/workspace")
+            store.set_action_run("action-run", "completed", output={"ok": True})
+            store.bind_study(config.campaign, "manifest", "harness", {"image": "digest"}, 60)
+            report = build_report(config, store)
+            comparison = report["paired_comparisons"]["f:action_minus_skill"]
+            self.assertEqual(report["scientific_status"], "exploratory")
+            self.assertTrue(comparison["interpretable"])
+            self.assertEqual(comparison["quality"]["mean_delta"], -1)
+            self.assertFalse(comparison["observed_cost_saving_at_nonnegative_quality"])
+
     def test_resume_includes_retryable_failures(self):
         with tempfile.TemporaryDirectory() as d:
             config, store = self.make(Path(d)); store.create_episode("retry", config.campaign, "t", "f", "plain", 0)
