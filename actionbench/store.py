@@ -223,7 +223,9 @@ class Store:
             if not row or row["campaign"] != campaign or row["state"] != "unknown_outcome" or row["episode_status"] != "blocked":
                 raise ResumeConflict("Request must have an unknown outcome in a blocked episode of this campaign")
             if response is None:
-                conn.execute("UPDATE requests SET state='rejected',completed_at=? WHERE request_id=?", (now(), request_id))
+                if row["response_json"] is not None:
+                    raise ResumeConflict("A provider response was received; it cannot be marked not executed")
+                conn.execute("UPDATE requests SET state='reserved',completed_at=NULL WHERE request_id=?", (request_id,))
                 resolution = "confirmed_not_executed"
             else:
                 conn.execute("""UPDATE requests SET state='completed',provider_request_id=?,response_json=?,actual_usd=?,input_tokens=?,cached_input_tokens=?,cache_write_tokens=?,output_tokens=?,response_status=?,incomplete_reason=?,model_returned=?,completed_at=? WHERE request_id=?""",
@@ -244,8 +246,8 @@ class Store:
     def mark_submitted(self, request_id: str) -> None:
         self.conn.execute("UPDATE requests SET state='submitted' WHERE request_id=? AND state IN ('reserved','rejected')", (request_id,))
 
-    def reject_request(self, request_id: str, detail: str) -> None:
-        self.conn.execute("UPDATE requests SET state='rejected',completed_at=? WHERE request_id=? AND state='submitted'", (now(), request_id))
+    def reject_request(self, request_id: str, detail: str, *, policy: bool = False) -> None:
+        self.conn.execute("UPDATE requests SET state=?,completed_at=? WHERE request_id=? AND state='submitted'", ("policy_rejected" if policy else "rejected", now(), request_id))
         self.event(None, "provider_rejection", {"request_id": request_id, "detail": detail})
 
     def complete_request(self, request_id: str, provider_request_id: str | None, response: dict, usage: dict, actual_usd: float) -> None:
@@ -284,7 +286,7 @@ class Store:
         return int(row["calls"]), int(row["inputs"]), int(row["outputs"])
 
     def campaign_spend(self, campaign: str) -> float:
-        row = self.conn.execute("SELECT COALESCE(SUM(COALESCE(actual_usd,reserved_usd)),0) value FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=? AND r.state!='rejected'", (campaign,)).fetchone()
+        row = self.conn.execute("SELECT COALESCE(SUM(COALESCE(actual_usd,reserved_usd)),0) value FROM requests r JOIN episodes e ON e.episode_id=r.episode_id WHERE e.campaign=? AND r.state NOT IN ('rejected','policy_rejected')", (campaign,)).fetchone()
         return float(row["value"])
 
     def create_action_run(self, action_run_id: str, episode_id: str, invocation_key: str, action_id: str, input_hash: str, workspace: str):

@@ -148,11 +148,17 @@ class Broker:
             if existing["state"] == "submitted":
                 self.store.unknown_request(existing["request_id"], "Coordinator restarted after request submission")
                 raise UnknownProviderOutcome(f"Request {request_key} was submitted before interruption and is unknown")
-            if existing["state"] == "rejected":
+            if existing["state"] == "policy_rejected":
                 raise ProviderRejectedError(f"Request {request_key} was already rejected by the provider; do not resend the same payload")
-            if existing["state"] == "reserved":
+            if existing["state"] in {"reserved", "rejected"}:
                 # Reservation is durably committed before the API call. It is safe
                 # to continue it because no provider request has been sent yet.
+                if existing["state"] == "rejected":
+                    calls, inputs, outputs = self.store.episode_limits(episode_id)
+                    if calls >= self.config.budget.max_llm_calls or inputs + existing["reserved_input_tokens"] > self.config.budget.max_input_tokens or outputs + max_output_tokens > self.config.budget.max_output_tokens:
+                        raise BudgetExceeded("Reconciled request would exceed its episode budget")
+                    if self.store.campaign_spend(self.config.campaign) + existing["reserved_usd"] > self.store.budget_ceiling(self.config):
+                        raise CampaignBudgetExceeded("Reconciled request would exceed the campaign dollar ceiling")
                 request_id = existing["request_id"]
                 self.store.mark_submitted(request_id)
                 try:
@@ -160,7 +166,7 @@ class Broker:
                 except UnknownProviderOutcome as exc:
                     self.store.unknown_request(request_id, str(exc)); raise
                 except ProviderRejectedError as exc:
-                    self.store.reject_request(request_id, str(exc)); raise
+                    self.store.reject_request(request_id, str(exc), policy=True); raise
                 except (ConfigurationError, InfrastructureError) as exc:
                     self.store.reject_request(request_id, str(exc)); raise
                 return self._checked_result(self._complete(request_id, raw))
@@ -190,7 +196,7 @@ class Broker:
             self.store.unknown_request(request_id, str(exc))
             raise
         except ProviderRejectedError as exc:
-            self.store.reject_request(request_id, str(exc))
+            self.store.reject_request(request_id, str(exc), policy=True)
             raise
         except (ConfigurationError, InfrastructureError) as exc:
             self.store.reject_request(request_id, str(exc))

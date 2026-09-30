@@ -11,7 +11,7 @@ from actionbench.cli import campaign_lock
 from actionbench.config import load_config
 from actionbench.design import plan_sample
 from actionbench.broker import Broker
-from actionbench.errors import ActionBenchError, InfrastructureError, ProviderOutputError, ProviderRejectedError, UnknownProviderOutcome
+from actionbench.errors import ActionBenchError, InfrastructureError, ProviderOutputError, ProviderRejectedError, ResumeConflict, UnknownProviderOutcome
 from actionbench.grader import grade
 from actionbench.report import build_report
 from actionbench.runner import ActionRunner, ContainerRunner
@@ -119,6 +119,10 @@ class CoreTests(unittest.TestCase):
             saved = store.conn.execute("SELECT state,provider_request_id,response_json FROM requests").fetchone()
             self.assertEqual((saved["state"], saved["provider_request_id"]), ("unknown_outcome", "provider-known"))
             self.assertEqual(json.loads(saved["response_json"]), raw)
+            store.set_episode("e", "blocked", retryable=False)
+            with self.assertRaises(ResumeConflict):
+                store.reconcile_request(config.campaign, store.conn.execute("SELECT request_id FROM requests WHERE episode_id='e'").fetchone()[0],
+                                        evidence="response was received", response=None)
             store.create_episode("e2", config.campaign, "t2", "f", "plain", 0)
             broker.client.request = lambda payload: ["unexpected top-level response"]
             with self.assertRaises(UnknownProviderOutcome): broker.call("e2", "k", "i", "x", 4)
@@ -138,7 +142,7 @@ class CoreTests(unittest.TestCase):
             for _ in range(2):
                 with self.assertRaises(ProviderRejectedError): broker.call("e", "k", "i", "x", 4)
             self.assertEqual(broker.client.calls, 1)
-            self.assertEqual(store.conn.execute("SELECT state FROM requests").fetchone()[0], "rejected")
+            self.assertEqual(store.conn.execute("SELECT state FROM requests").fetchone()[0], "policy_rejected")
 
     def test_generated_procedure_underscores_and_paired_skill(self):
         with tempfile.TemporaryDirectory() as d:
@@ -368,9 +372,9 @@ class CoreTests(unittest.TestCase):
             store.mark_submitted("r"); store.unknown_request("r", "connection lost")
             store.set_episode("e", "blocked", retryable=False)
             store.reconcile_request(config.campaign, "r", evidence="provider confirmed request absent", response=None)
-            self.assertEqual(store.request_by_id("r")["state"], "rejected")
+            self.assertEqual(store.request_by_id("r")["state"], "reserved")
             self.assertEqual(store.episode("e")["status"], "queued")
-            self.assertEqual(store.campaign_spend(config.campaign), 0)
+            self.assertEqual(store.campaign_spend(config.campaign), .1)
 
     def test_reconciliation_unblocks_creation_parent_and_development_child(self):
         with tempfile.TemporaryDirectory() as d:

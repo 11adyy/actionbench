@@ -10,7 +10,7 @@ from .statistics import crossed_paired_bootstrap
 
 def build_report(config, store) -> dict:
     rows = store.conn.execute("""SELECT e.task_id,e.family,e.condition,e.replica,e.status,e.retryable,e.error,e.failure_kind,e.duration_seconds,ev.score_json,
-                              COALESCE(SUM(CASE WHEN r.state='rejected' THEN 0 ELSE COALESCE(r.actual_usd,r.reserved_usd) END),0) cost,
+                              COALESCE(SUM(CASE WHEN r.state IN ('rejected','policy_rejected') THEN 0 ELSE COALESCE(r.actual_usd,r.reserved_usd) END),0) cost,
                               SUM(CASE WHEN r.state='completed' THEN 1 ELSE 0 END) model_calls,
                               SUM(CASE WHEN r.state IN ('reserved','submitted','unknown_outcome') THEN 1 ELSE 0 END) uncertain_requests
                               FROM episodes e LEFT JOIN evaluations ev ON ev.episode_id=e.episode_id
