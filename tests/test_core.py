@@ -14,7 +14,7 @@ from actionbench.broker import Broker
 from actionbench.errors import ActionBenchError, InfrastructureError, UnknownProviderOutcome
 from actionbench.grader import grade
 from actionbench.report import build_report
-from actionbench.runner import ActionRunner
+from actionbench.runner import ActionRunner, ContainerRunner
 from actionbench.skill_creator import create_package
 from actionbench.store import Store
 from actionbench.statistics import crossed_paired_bootstrap
@@ -28,6 +28,19 @@ class CoreTests(unittest.TestCase):
         config = load_config(path); store = Store(config.db_path); store.ensure_campaign(config)
         self.addCleanup(store.close)
         return config, store
+
+    def test_docker_bind_mount_accepts_episode_colons(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, _ = self.make(Path(d))
+            workspace = Path(d) / "pilot:integration:abc" / "attempt-1"
+            action_dir = Path(d) / "pilot:action"
+            with patch("actionbench.runner.shutil.which", return_value="/usr/bin/docker"):
+                command = ContainerRunner(config, None)._docker(workspace, ["python", "main.py"], action_dir, "test")
+            mounts = [command[i+1] for i, item in enumerate(command[:-1]) if item == "--mount"]
+            self.assertEqual(len(mounts), 2)
+            self.assertIn(f"source={workspace.resolve()},target=/workspace", mounts[0])
+            self.assertIn(f"source={action_dir.resolve()},target=/action,readonly", mounts[1])
+            self.assertNotIn("-v", command)
 
     def test_request_identity_includes_payload_hash(self):
         with tempfile.TemporaryDirectory() as d:

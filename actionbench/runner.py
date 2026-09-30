@@ -24,8 +24,10 @@ class ContainerRunner:
     def _docker(self, workspace: Path, command: list[str], action_dir: Path | None, container_name: str) -> list[str]:
         if not shutil.which("docker"):
             raise InfrastructureError("Docker is required for isolated execution")
-        mounts = ["-v", f"{workspace.resolve()}:/workspace:rw"]
-        if action_dir: mounts += ["-v", f"{action_dir.resolve()}:/action:ro"]
+        # Docker's -v syntax treats ':' in a campaign/episode path as a field
+        # separator. --mount keeps such paths valid on hosted runners.
+        mounts = ["--mount", f"type=bind,source={workspace.resolve()},target=/workspace"]
+        if action_dir: mounts += ["--mount", f"type=bind,source={action_dir.resolve()},target=/action,readonly"]
         return ["docker", "run", "--rm", "--name", container_name, "-i", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128", "--memory", f"{self.config.execution.memory_mb}m", "--cpus", str(self.config.execution.cpus), "--tmpfs", "/tmp:rw,noexec,nosuid,size=128m", *mounts, "-w", "/workspace", self.config.execution.docker_image, *command]
 
     def execute(self, episode_id: str, run_id: str, workspace: Path, command: list[str], input_data: dict, action_dir: Path | None = None, allow_llm: bool = False) -> dict:
