@@ -75,6 +75,7 @@ class ContainerRunner:
                         try: message = json.loads(line)
                         except (UnicodeDecodeError, json.JSONDecodeError) as exc: raise GeneratedProgramError(f"Program emitted invalid JSONL: {line[:200]!r}") from exc
                         if not isinstance(message, dict): raise GeneratedProgramError("Program message must be a JSON object")
+                        if output is not None: raise GeneratedProgramError("Program emitted a message after its result")
                         if message.get("kind") == "llm_request":
                             if not allow_llm: raise GeneratedProgramError("This condition cannot request an LLM from generated code")
                             step = str(message.get("step", ""))
@@ -86,7 +87,13 @@ class ContainerRunner:
                             except KeyError: selector.register(proc.stdin, selectors.EVENT_WRITE)
                         elif message.get("kind") == "result":
                             if output is not None or not isinstance(message.get("output"), dict): raise GeneratedProgramError("Program emitted duplicate or invalid result")
+                            if outgoing: raise GeneratedProgramError("Program returned before receiving its pending input")
                             output = message["output"]
+                            # A result is terminal. Deterministic scripts may read
+                            # stdin in a loop, so signal EOF and let them exit.
+                            try: selector.unregister(proc.stdin)
+                            except KeyError: pass
+                            proc.stdin.close()
                         else: raise GeneratedProgramError(f"Program emitted unknown message kind: {message.get('kind')}")
             if pending: raise GeneratedProgramError("Program emitted an unterminated JSONL message")
             try: proc.wait(timeout=max(.01, deadline - time.monotonic()))

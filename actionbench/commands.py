@@ -201,6 +201,17 @@ def _container_smoke(config) -> dict:
                                 {"value": "round-trip"}, action_dir=action)
         if result != {"value": "round-trip", "readonly": True}:
             raise InfrastructureError(f"Production container runner failed its real round trip: {result}")
+        (action / "stream.py").write_text(
+            "import json,sys\n"
+            "for line in sys.stdin:\n"
+            " message=json.loads(line)\n"
+            " print(json.dumps({'kind':'result','output':{'value':message['input']['value']}}),flush=True)\n"
+        )
+        stream_runner = ContainerRunner(replace(config, execution=replace(config.execution, timeout_seconds=5)), None)
+        stream_result = stream_runner.execute("smoke:stdin-eof", "docker-eof", root / "stream-workspace",
+                                              ["python", "/action/stream.py"], {"value": "eof"}, action_dir=action)
+        if stream_result != {"value": "eof"}:
+            raise InfrastructureError(f"Production container runner did not close stdin after result: {stream_result}")
         (action / "slow.py").write_text("import time\ntime.sleep(30)\n")
         timed = ContainerRunner(replace(config, execution=replace(config.execution, timeout_seconds=1)), None)
         try:
@@ -216,6 +227,7 @@ def _container_smoke(config) -> dict:
         if remaining.stdout.strip():
             raise InfrastructureError(f"Container cleanup left a running or stopped action: {remaining.stdout.strip()}")
         return {"passed": True, "colon_path": True, "readonly_action": True, "jsonl_round_trip": True,
+                "stdin_closed_after_result": True,
                 "timeout": True, "container_cleanup": True}
 
 
