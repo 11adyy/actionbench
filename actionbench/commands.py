@@ -391,6 +391,7 @@ def _id(*parts: object) -> str:
 
 
 def _agent_failure_kind(exc: ActionBenchError) -> str:
+    if isinstance(exc, BudgetExceeded): return "episode_budget_exhausted"
     if isinstance(exc, AgentProtocolError): return "protocol_error"
     if isinstance(exc, GeneratedProgramError): return "generated_program_failed"
     if isinstance(exc, ProviderOutputError): return "provider_output_invalid"
@@ -461,7 +462,7 @@ def _probe_package_procedures(config, store, family, replica: int, revision: int
                 raise
             except (ActionBenchError, ValueError) as exc:
                 store.set_episode(episode, "failed", error=str(exc), retryable=False,
-                                  failure_kind="generated_program_failed")
+                                  failure_kind=_agent_failure_kind(exc) if isinstance(exc, ActionBenchError) else "package_probe_failed")
                 feedback.append({"procedure_id": procedure["id"], "probe_error": str(exc)[:1000]})
     return feedback
 

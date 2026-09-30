@@ -6,12 +6,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from actionbench.agent import AgentRunner
-from actionbench.commands import _bind_study, _creation_episode, _development_episode, _execute, _plan_test_episodes, _probe_package_procedures, _read_saved_answer, _validate_on_development, _verified_package
+from actionbench.commands import _agent_failure_kind, _bind_study, _creation_episode, _development_episode, _execute, _plan_test_episodes, _probe_package_procedures, _read_saved_answer, _validate_on_development, _verified_package
 from actionbench.cli import campaign_lock
 from actionbench.config import load_config
 from actionbench.design import plan_sample
 from actionbench.broker import Broker
-from actionbench.errors import ActionBenchError, GeneratedProgramError, InfrastructureError, ProviderOutputError, ProviderRejectedError, ResumeConflict, UnknownProviderOutcome
+from actionbench.errors import ActionBenchError, BudgetExceeded, GeneratedProgramError, InfrastructureError, ProviderOutputError, ProviderRejectedError, ResumeConflict, UnknownProviderOutcome
 from actionbench.grader import grade
 from actionbench.report import build_report
 from actionbench.runner import ActionRunner, ContainerRunner
@@ -21,6 +21,9 @@ from actionbench.statistics import crossed_paired_bootstrap
 
 
 class CoreTests(unittest.TestCase):
+    def test_episode_budget_failure_keeps_its_own_kind(self):
+        self.assertEqual(_agent_failure_kind(BudgetExceeded("Episode call limit")), "episode_budget_exhausted")
+
     def test_generated_procedure_probe_rejects_broken_protocol_and_resumes_without_rerun(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); config, store = self.make(root)
