@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-mkdir -p .cloud-state
+mkdir -p .cloud-state artifacts-v2
 case "${1:-}" in
   restore)
     [[ "$AB_CAMPAIGN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || { echo 'Invalid campaign' >&2; exit 2; }
@@ -33,6 +33,12 @@ PY
     python -m actionbench.v2_cli prepare-custom --config experiment-v2.json
     python -m actionbench.v2_cli add-qmsum --config experiment-v2.json
     python -m actionbench.v2_cli build-image --config experiment-v2.json
+    image_id=$(docker image inspect --format '{{.Id}}' actionbench-skill-v2:1)
+    if [ -s .cloud-state/v2-image-id ]; then
+      [ "$image_id" = "$(cat .cloud-state/v2-image-id)" ] || { echo 'Execution image changed during resume' >&2; exit 2; }
+    else
+      printf '%s\n' "$image_id" > .cloud-state/v2-image-id
+    fi
     python -m actionbench.v2_cli smoke --config experiment-v2.json
     if [ "$AB_ACTION" = smoke ]; then exit 0; fi
     python -m actionbench.v2_cli create-skills --config experiment-v2.json
@@ -49,7 +55,9 @@ PY
       python -m actionbench.v2_cli report --config experiment-v2.json > artifacts-v2/report.json || true
     fi
     if [ -s experiment-v2.json ]; then
-      tar -czf .cloud-state/state.tar.gz experiment-v2.json artifacts-v2 .cloud-state/v2-source-sha
+      paths=(experiment-v2.json artifacts-v2 .cloud-state/v2-source-sha)
+      if [ -s .cloud-state/v2-image-id ]; then paths+=(.cloud-state/v2-image-id); fi
+      tar -czf .cloud-state/state.tar.gz "${paths[@]}"
     fi
     ;;
   *) echo 'Usage: v2_worker.sh restore|run|finalize' >&2; exit 2 ;;
