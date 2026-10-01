@@ -55,6 +55,7 @@ import json
 from pathlib import Path
 assert json.loads(Path('.cloud-state/resume-smoke.json').read_text()).get('resumed') is True
 PY
+      python cloud/v2_resume_fault_gate.py
       python cloud/v2_resume_guard.py verify artifacts-v2/actionbench-v2.sqlite3 .cloud-state/pre-resume-calls.json
       exit 0
     fi
