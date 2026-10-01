@@ -97,6 +97,39 @@ def _agent(model, provider_model: str, **kwargs):
     return create_deep_agent(model=model,subagents=[],**kwargs)
 
 
+def _probe_package(config: dict, ledger: Ledger, manifest: dict, family: str, replica: int,
+                   kind: str, destination: Path, root: Path, episode: str, revision: int):
+    """Exercise the candidate in the actual sandbox on held-out development input."""
+    data_root=Path(config["dataset_root"])
+    example=next(item for item in manifest["tasks"] if item["family"]==family and item["split"]=="development")
+    task_path=data_root/example["task"]
+    task=json.loads(task_path.read_text())
+    workspace=root/"development-probes"/family/str(replica)/kind/str(revision)
+    workspace.mkdir(parents=True,exist_ok=False)
+    shutil.copytree(task_path.parent/"files",workspace/"files")
+    arguments={"query":task["prompt"],"task":task["prompt"],"files_dir":"/workspace/files"}
+    before=ledger.db.execute("SELECT COUNT(*) FROM calls WHERE episode_id=? AND step LIKE ? AND state='completed'",
+                             (episode,f"probe-{revision}:%")).fetchone()[0]
+    provider=dict(config["provider"])
+    probe_meter=Meter(ledger,float(config["campaign_limit_usd"]),float(provider["input_usd_per_million"]),
+                      float(provider["cached_input_usd_per_million"]),float(provider["output_usd_per_million"]),1024)
+    broker=_BrokerAdapter(_model(config,probe_meter),episode,float(config["creation_budget_usd"]))
+    container=ContainerRunner(SimpleNamespace(execution=SimpleNamespace(**config["execution"])),broker)
+    output=container.execute(episode,f"probe-{revision}",workspace,["python","/action/main.py"],arguments,
+                             action_dir=destination,allow_llm=kind=="script_llm")
+    if not isinstance(output,dict) or "kind" in output or "output" in output:
+        raise ValueError("Graph emitted a nested protocol envelope; ctx.emit must receive only the answer object")
+    required={"owner","decision","evidence_paths"} if family=="file_exploration" else {"summary","fact_ids","evidence_paths"}
+    missing=required-output.keys()
+    if missing:
+        raise ValueError(f"Graph output is missing required fields: {sorted(missing)}")
+    if kind=="script_llm":
+        after=ledger.db.execute("SELECT COUNT(*) FROM calls WHERE episode_id=? AND step LIKE ? AND state='completed' AND provider_id IS NOT NULL",
+                                (episode,f"probe-{revision}:%")).fetchone()[0]
+        if after<=before:raise ValueError("LLM graph did not complete a real brokered model call")
+    return output
+
+
 def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, family: str, replica: int, kind: str, root: Path):
     if kind not in KINDS:raise ValueError(kind)
     destination=root/"packages"/family/str(replica)/kind
@@ -137,14 +170,18 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
     ledger.set_episode(episode,"running")
     body=("Use Python 3.11, langgraph.graph.StateGraph and a LangChain RunnableLambda. "
           "Build a small finite graph with named nodes; do not create an agent, planner, recursion, or while loop. "
-          "Read exactly one JSON line from stdin; input is message['input']. "
-          "Emit exactly one JSON line {'kind':'result','output':{...}} then exit. "
+          "Read exactly one JSON line from stdin; args=message['input'] is a DICT, and query=args['query'] is a STRING. "
+          "Use ctx=ActionContext(args), graph.compile().invoke({'query':query}), and ctx.emit(result['output']). "
+          "ctx.emit adds the result protocol envelope itself; NEVER pass {'kind':'result','output':...} to ctx.emit. "
+          "Emit one result and exit. The direct Docker probe must run successfully before this package is accepted. "
           "Only access files under /workspace/files. "
           "Use from action_sdk import ActionContext and ctx=ActionContext(message['input']) to emit. ")
     if kind=="script_llm":
         body+=("For a semantic subtask, call ctx.call_llm(prompt, instructions='', max_output_tokens=512) "
                "inside one explicit graph node. This capability uses the same provider key and budget as the outer Deep Agent. ")
     else:body+="Do not call a model or import ChatOpenAI. "
+    body+=("The output object must have owner, decision, evidence_paths. " if family=="file_exploration" else
+           "The output object must have summary, fact_ids, evidence_paths. ")
     files_instruction=("Use write_file to create /main.py first, then /SKILL.md with YAML name and description. "
                        if kind=="script_only" else
                        "The paired /SKILL.md already exists. Read it and create only /main.py; do not edit /SKILL.md. ")
@@ -171,14 +208,35 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
                                      config={"configurable":{"thread_id":episode},"recursion_limit":12})
                     except GraphRecursionError:
                         pass
-        if not (destination/"SKILL.md").is_file() or not (destination/"main.py").is_file():
-            raise ValueError("Creator did not write SKILL.md and main.py")
-        if paired_skill is not None and (destination/"SKILL.md").read_bytes()!=paired_skill:
-            raise ValueError("Creator changed the paired skill instructions")
-        validate_script(destination/"main.py",kind)
-        (destination/"action_sdk.py").write_text(Path(action_sdk.__file__).read_text())
-        if not re.search(r"(?m)^name:\s*",(destination/"SKILL.md").read_text()):
-            raise ValueError("Skill YAML frontmatter must name the skill")
+                last_error=None
+                for revision in range(2):
+                    try:
+                        if not (destination/"SKILL.md").is_file() or not (destination/"main.py").is_file():
+                            raise ValueError("Creator did not write SKILL.md and main.py")
+                        if paired_skill is not None and (destination/"SKILL.md").read_bytes()!=paired_skill:
+                            raise ValueError("Creator changed the paired skill instructions")
+                        validate_script(destination/"main.py",kind)
+                        (destination/"action_sdk.py").write_text(Path(action_sdk.__file__).read_text())
+                        if not re.search(r"(?m)^name:\s*",(destination/"SKILL.md").read_text()):
+                            raise ValueError("Skill YAML frontmatter must name the skill")
+                        _probe_package(config,ledger,manifest,family,replica,kind,destination,root,episode,revision)
+                        last_error=None
+                        break
+                    except Exception as exc:
+                        if ledger.unresolved(episode):raise
+                        last_error=exc
+                        if revision==1:break
+                        feedback=("The candidate failed its real Docker development probe or validation. "
+                                  "Fix /main.py, then stop. Keep /SKILL.md unchanged if it exists. "
+                                  "Read message['input'] as a dict; call ctx.emit(answer_object), not ctx.emit({'kind':'result','output':...}). "
+                                  f"Failure: {str(exc)[-1400:]}")
+                        try:
+                            with model_scope(episode,"creator-repair",float(config["creation_budget_usd"])):
+                                agent.invoke({"messages":[{"role":"user","content":feedback}]},
+                                             config={"configurable":{"thread_id":episode},"recursion_limit":16})
+                        except GraphRecursionError:
+                            pass
+                if last_error is not None:raise last_error
         hashed=tree_hash(destination)
         (destination/"package.json").write_text(json.dumps({"family":family,"replica":replica,"kind":kind,"sha256":hashed},indent=2))
         ledger.save_package(family,replica,kind,"completed",str(destination),hashed)
@@ -186,8 +244,8 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
         return destination
     except Exception as exc:
         status="blocked" if ledger.unresolved(episode) else "failed"
-        ledger.save_package(family,replica,kind,status,str(destination),None,str(exc)[:500])
-        ledger.set_episode(episode,status,error=str(exc)[:500])
+        ledger.save_package(family,replica,kind,status,str(destination),None,str(exc)[-2000:])
+        ledger.set_episode(episode,status,error=str(exc)[-2000:])
         if status=="blocked":raise
         return None
 
@@ -280,4 +338,4 @@ def run_episode(config:dict,ledger:Ledger,meter:Meter,task:dict,replica:int,kind
         ledger.set_episode(episode,"completed",score=score["primary"],grader=score,answer=answer,duration=time.monotonic()-start)
     except Exception as exc:
         status="blocked" if ledger.unresolved(episode) or isinstance(exc,(OSError,KeyboardInterrupt)) else "failed"
-        ledger.set_episode(episode,status,score=0.0 if status=="failed" else None,error=str(exc)[:500],duration=time.monotonic()-start)
+        ledger.set_episode(episode,status,score=0.0 if status=="failed" else None,error=str(exc)[-2000:],duration=time.monotonic()-start)
