@@ -6,7 +6,8 @@ from pathlib import Path
 
 from actionbench.v2_data import grade, prepare_custom
 from actionbench.v2_store import Ledger
-from actionbench.v2_runner import _BrokerAdapter, validate_script
+from actionbench.v2_runner import _BrokerAdapter, validate_script, run_episode
+from actionbench.v2_store import digest
 from actionbench.v2_judge import _text_content
 from cloud.v2_resume_guard import signature
 from types import SimpleNamespace
@@ -94,6 +95,39 @@ print(json.dumps({"kind":"result","output":result}))
             self.assertNotEqual(before,signature(path))
             ledger.complete("request-1",input_tokens=10,cached_tokens=0,output_tokens=2,actual_usd=0.0001,provider_id="resp-real")
             self.assertNotEqual(before,signature(path))
+            ledger.close()
+
+    def test_interrupted_episode_without_unknown_call_preserves_attempt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            ledger=Ledger(root/"db.sqlite3","study",{})
+            episode="test:file_exploration-test-000:0:script_only:0.003"
+            ledger.begin_episode(episode,"file_exploration-test-000","file_exploration",0,"script_only",0.003)
+            ledger.set_episode(episode,"running")
+            workspace=root/"workspaces"/digest(episode)
+            workspace.mkdir(parents=True)
+            (workspace/"partial.txt").write_text("saved")
+            checkpoint=root/"checkpoints"/(digest(episode)+".sqlite3")
+            checkpoint.parent.mkdir()
+            checkpoint.write_text("checkpoint")
+            run_episode({},ledger,None,{"id":"file_exploration-test-000","family":"file_exploration"},0,"script_only",0.003,root)
+            archived=root/"interrupted"/digest(episode)/"0"
+            self.assertEqual((archived/"workspace/partial.txt").read_text(),"saved")
+            self.assertEqual((archived/"checkpoint").read_text(),"checkpoint")
+            self.assertEqual(ledger.episode(episode)["status"],"failed")
+            self.assertEqual(ledger.episode(episode)["error"],"Skill package unavailable")
+            ledger.close()
+
+    def test_interrupted_episode_with_unknown_call_stays_blocked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);ledger=Ledger(root/"db.sqlite3","study",{})
+            episode="test:file_exploration-test-000:0:script_only:0.003"
+            ledger.begin_episode(episode,"file_exploration-test-000","file_exploration",0,"script_only",0.003)
+            ledger.set_episode(episode,"running")
+            ledger.reserve("unknown","test:file_exploration-test-000:0:script_only:0.003","outer",0.0001,0.003,0.01)
+            run_episode({},ledger,None,{"id":"file_exploration-test-000","family":"file_exploration"},0,"script_only",0.003,root)
+            self.assertEqual(ledger.episode(episode)["status"],"blocked")
+            self.assertFalse((root/"interrupted").exists())
             ledger.close()
 
 

@@ -25,7 +25,7 @@ python cloud/v2_review_packet.py --ledger artifacts-v2/actionbench-v2.sqlite3 --
 
 Keep the generated `condition-key.json` away from human reviewers until both independent ratings are locked.
 
-`resume` visits the same frozen cells and skips completed ones. A submitted call or interrupted cell with an unknown outcome is blocked for audit; it is never silently resent. The SQLite ledger, packages, workspaces, dataset manifest, hashes and report must be archived together. GitHub Actions workflow `evaluate-v2.yml` performs the same Docker/API gate and uploads durable state on success or failure.
+`resume` visits the same frozen cells and skips completed ones. If an episode or package creation was interrupted but every prior provider call and script invocation has a known outcome, the harness archives its partial workspace and checkpoint, restarts the attempt under the original budget, and keeps all prior call costs. A submitted call or script invocation with an unknown outcome is blocked for audit; it is never silently resent. The SQLite ledger, packages, workspaces, dataset manifest, hashes and report must be archived together. GitHub Actions workflow `evaluate-v2.yml` performs the same Docker/API gate and uploads durable state on success or failure. Its `resume-check` action verifies a saved real-provider smoke can be restored without adding a call.
 
 ## Pilot and interpretation
 

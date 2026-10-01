@@ -97,6 +97,19 @@ def _agent(model, provider_model: str, **kwargs):
     return create_deep_agent(model=model,subagents=[],**kwargs)
 
 
+def _archive_interrupted(root: Path, episode: str, paths: dict[str, Path]) -> None:
+    """Keep a failed attempt's files before a safe, separately metered restart."""
+    present={name:path for name,path in paths.items() if path.exists()}
+    if not present:return
+    parent=root/"interrupted"/digest(episode)
+    parent.mkdir(parents=True,exist_ok=True)
+    index=0
+    while (parent/str(index)).exists():index+=1
+    archive=parent/str(index)
+    archive.mkdir()
+    for name,path in present.items():shutil.move(str(path),str(archive/name))
+
+
 def _probe_package(config: dict, ledger: Ledger, manifest: dict, family: str, replica: int,
                    kind: str, destination: Path, root: Path, episode: str, revision: int):
     """Exercise the candidate in the actual sandbox on held-out development input."""
@@ -136,6 +149,7 @@ def _probe_package(config: dict, ledger: Ledger, manifest: dict, family: str, re
 
 def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, family: str, replica: int, kind: str, root: Path):
     if kind not in KINDS:raise ValueError(kind)
+    episode=f"creation:{family}:{replica}:{kind}"
     destination=root/"packages"/family/str(replica)/kind
     prior=ledger.package(family,replica,kind)
     if prior:
@@ -146,7 +160,6 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
     if kind=="script_llm":
         base=ledger.package(family,replica,"script_only")
         if not base or base["status"]!="completed":
-            episode=f"creation:{family}:{replica}:{kind}"
             ledger.begin_episode(episode,episode,family,replica,kind,float(config["creation_budget_usd"]))
             error="Paired deterministic skill was unavailable"
             ledger.save_package(family,replica,kind,"failed",None,None,error)
@@ -155,6 +168,16 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
         source=Path(base["path"])
         if tree_hash(source)!=base["sha256"]:raise ValueError("Paired skill hash changed")
         paired_skill=(source/"SKILL.md").read_bytes()
+    previous=ledger.episode(episode)
+    if previous and previous["status"] in ("running","queued"):
+        if ledger.unresolved(episode):raise ValueError("Unknown provider outcome in skill creation")
+        _archive_interrupted(root,episode,{"package":destination,
+            "checkpoint":root/"checkpoints"/(digest(episode)+".sqlite3"),
+            "checkpoint-wal":root/"checkpoints"/(digest(episode)+".sqlite3-wal"),
+            "checkpoint-shm":root/"checkpoints"/(digest(episode)+".sqlite3-shm"),
+            "probes":root/"development-probes"/family/str(replica)/kind})
+    elif destination.exists():
+        raise ValueError("Existing incomplete package requires manual inspection")
     destination.mkdir(parents=True,exist_ok=False)
     if paired_skill is not None:
         (destination/"SKILL.md").write_bytes(paired_skill)
@@ -172,7 +195,6 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
         snippets={p.relative_to(files).as_posix():p.read_text(errors="replace")[:1200] for p in selected}
         examples.append({"prompt":task["prompt"],"sample_files":snippets})
         if len(examples)==3:break
-    episode=f"creation:{family}:{replica}:{kind}"
     ledger.begin_episode(episode,episode,family,replica,kind,float(config["creation_budget_usd"]))
     if ledger.unresolved(episode):raise ValueError("Unknown provider outcome in skill creation")
     ledger.set_episode(episode,"running")
@@ -280,12 +302,15 @@ def run_episode(config:dict,ledger:Ledger,meter:Meter,task:dict,replica:int,kind
     episode=f"test:{task['id']}:{replica}:{kind}:{budget:.3f}"
     existing=ledger.begin_episode(episode,task["id"],family,replica,kind,budget)
     if existing["status"] in ("completed","failed"):return
-    if existing["status"] in ("running","blocked"):
-        ledger.set_episode(episode,"blocked",error="Interrupted episode needs provider and checkpoint audit")
+    if existing["status"]=="blocked":return
+    if ledger.unresolved(episode) or ledger.db.execute("SELECT 1 FROM invocations WHERE episode_id=? AND state='submitted' LIMIT 1",(episode,)).fetchone():
+        ledger.set_episode(episode,"blocked",error="Provider or script invocation outcome is unknown")
         return
-    if ledger.unresolved(episode):
-        ledger.set_episode(episode,"blocked",error="Provider outcome is unknown")
-        return
+    if existing["status"]=="running":
+        _archive_interrupted(root,episode,{"workspace":root/"workspaces"/digest(episode),
+            "checkpoint":root/"checkpoints"/(digest(episode)+".sqlite3"),
+            "checkpoint-wal":root/"checkpoints"/(digest(episode)+".sqlite3-wal"),
+            "checkpoint-shm":root/"checkpoints"/(digest(episode)+".sqlite3-shm")})
     package=ledger.package(skill_family,replica,kind)
     if not package or package["status"]!="completed":
         ledger.set_episode(episode,"failed",score=0.0,grader={"reason":"package_unavailable"},error="Skill package unavailable")
@@ -302,7 +327,7 @@ def run_episode(config:dict,ledger:Ledger,meter:Meter,task:dict,replica:int,kind
         shutil.copytree(package_dir,workspace/"skills"/"task-skill")
     backend=_backend(workspace)
     model=_model(config,meter)
-    ordinal=0
+    ordinal=ledger.db.execute("SELECT COALESCE(MAX(ordinal)+1,0) FROM invocations WHERE episode_id=?",(episode,)).fetchone()[0]
     invocation_lock=threading.RLock()
     adapter=_BrokerAdapter(model,episode,budget)
     docker_config=SimpleNamespace(execution=SimpleNamespace(**config["execution"]))
