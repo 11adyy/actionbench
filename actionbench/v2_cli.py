@@ -72,7 +72,7 @@ def status(ledger: Ledger):
             "model_requests":dict(Counter(x["state"] for x in ledger.db.execute("SELECT state FROM calls")))}
 
 
-def report(ledger:Ledger):
+def report(ledger:Ledger, manifest:dict):
     result=status(ledger)
     rows=ledger.db.execute("""SELECT family,condition,budget_usd,COUNT(*) n,
         SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) completed,
@@ -107,30 +107,31 @@ def report(ledger:Ledger):
         WHERE e.task_id LIKE '%-test-%' AND e.condition IN ('script_only','script_llm')
         GROUP BY e.id"""):
         paired[(row["family"],row["budget_usd"],row["task_id"],row["replica"])][row["condition"]]=dict(row)
+    task_groups={item["id"]:item.get("group_id",item["id"]) for item in manifest["tasks"]}
     contrasts=[]
     for family,budget in sorted({(key[0],key[1]) for key in paired}):
         cells=[(key,value) for key,value in paired.items() if key[:2]==(family,budget)]
         valid=all(set(value)=={"script_only","script_llm"} and all(value[k]["status"] in ("completed","failed") for k in value) for _,value in cells)
-        task_ids=sorted({key[2] for key,_ in cells})
+        groups=sorted({task_groups.get(key[2],key[2]) for key,_ in cells})
         deltas=[]
         cost_deltas=[]
-        by_task=defaultdict(list)
+        by_group=defaultdict(list)
         for key,value in cells:
             if not valid:break
             quality=float(value["script_llm"]["score"] or 0)-float(value["script_only"]["score"] or 0)
             cost=float(value["script_llm"]["usd"])-float(value["script_only"]["usd"])
-            deltas.append(quality);cost_deltas.append(cost);by_task[key[2]].append(quality)
+            deltas.append(quality);cost_deltas.append(cost);by_group[task_groups.get(key[2],key[2])].append(quality)
         interval=None
-        if valid and task_ids:
+        if valid and groups:
             rng=random.Random(20261001)
             samples=[]
             for _ in range(2000):
-                picked=[rng.choice(task_ids) for _ in task_ids]
-                values=[rng.choice(by_task[task]) for task in picked for _ in range(len(by_task[task]))]
+                picked=[rng.choice(groups) for _ in groups]
+                values=[rng.choice(by_group[group]) for group in picked for _ in range(len(by_group[group]))]
                 samples.append(sum(values)/len(values))
             samples.sort()
             interval=[samples[49],samples[1950]]
-        contrasts.append({"family":family,"budget_usd":budget,"paired_cells":len(cells),"terminal_pairs":len(deltas),
+        contrasts.append({"family":family,"budget_usd":budget,"paired_cells":len(cells),"independent_groups":len(groups),"terminal_pairs":len(deltas),
                           "quality_delta_llm_minus_only":sum(deltas)/len(deltas) if deltas else None,
                           "quality_ci95_exploratory":interval,"runtime_cost_delta_usd":sum(cost_deltas)/len(cost_deltas) if cost_deltas else None,
                           "interpretable":valid})
@@ -167,7 +168,7 @@ def main(argv:list[str]|None=None)->int:
             ledger=Ledger(root/"actionbench-v2.sqlite3",cfg["campaign"],frozen)
             try:
                 if args.command=="status":output=status(ledger)
-                elif args.command=="report":output=report(ledger)
+                elif args.command=="report":output=report(ledger,manifest)
                 elif args.command=="verify-terminal":
                     rows=ledger.db.execute("SELECT status,COUNT(*) n FROM episodes WHERE task_id LIKE '%-test-%' AND condition IN ('script_only','script_llm') GROUP BY status").fetchall()
                     counts={row["status"]:row["n"] for row in rows}

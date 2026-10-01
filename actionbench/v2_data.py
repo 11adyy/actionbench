@@ -94,6 +94,7 @@ def add_qmsum(root: Path, *, train_count: int = 6, test_count: int = 60, seed: i
         if len(selected) < count: raise ValueError(f"QMSum {split} contains only {len(selected)} eligible meetings")
         for index,(record,query) in enumerate(selected):
             task_id = f"qmsum-{split}-{index:03d}"
+            meeting_group="qmsum-meeting-"+hashlib.sha256(json.dumps(record["meeting_transcripts"],sort_keys=True).encode()).hexdigest()[:16]
             corpus = root / "public" / task_id / "files"
             turns = record["meeting_transcripts"]
             for j in range(0,len(turns),30):
@@ -101,7 +102,8 @@ def add_qmsum(root: Path, *, train_count: int = 6, test_count: int = 60, seed: i
                 _write(corpus / f"transcript/part-{j//30:03d}.txt","\n".join(f"[{j+k}] {turn.get('speaker','')}: {turn.get('content','')}" for k,turn in enumerate(chunk)))
             _write_json(root / "public" / task_id / "task.json", {"id":task_id,"family":"qmsum","prompt":query["query"]+" Return a concise summary with relevant evidence paths.","files_dir":"files"})
             _write_json(root / "private" / f"{task_id}.json",{"reference":query["answer"],"relevant_text_span":query.get("relevant_text_span",[])})
-            manifest["tasks"].append({"id":task_id,"family":"qmsum","split":split,"task":f"public/{task_id}/task.json","reference":f"private/{task_id}.json"})
+            manifest["tasks"].append({"id":task_id,"family":"qmsum","split":split,"group_id":meeting_group,
+                                      "task":f"public/{task_id}/task.json","reference":f"private/{task_id}.json"})
     manifest["qmsum_sha256"] = locks
     _write_json(manifest_path,manifest)
     return manifest
