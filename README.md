@@ -1,8 +1,16 @@
 # ActionBench
 
-ActionBench evaluates an agent that uses ordinary skills against an agent that can reuse **actions**: executable, versioned procedures inside a skill which make controlled LLM calls through the benchmark harness.
+ActionBench contains two separate study designs. The current **Deep Agents v2** study compares the same skill with a deterministic Python/LangGraph script against that skill with a Python/LangGraph script that can make controlled model calls. The earlier study compares ordinary skills with several action conditions; its code and results remain available as historical evidence.
 
 It uses real provider requests, real subprocess/container execution, persistent SQLite state, and independent graders. It does not fabricate model outputs or grader scores.
+
+## Deep Agents v2
+
+Read the [v2 study protocol](docs/V2_STUDY.md) for setup and resumable commands, and the [audited exploratory pilot result](docs/V2_PILOT_001_RESULTS.md) for observed quality, cost, failures, and limits. The hosted workflows are [`evaluate-v2.yml`](.github/workflows/evaluate-v2.yml) and [`judge-v2-artifact.yml`](.github/workflows/judge-v2-artifact.yml). A condition-blind human review packet generator is in [`cloud/v2_review_packet.py`](cloud/v2_review_packet.py); human ratings have not yet been collected.
+
+The raw API key stays in the host harness. Generated scripts run in network-isolated Docker and request the same model through a metered broker. A real Docker/API canary and a hosted resume check passed. The pilot is exploratory and does not show general superiority of model-enabled actions.
+
+## Earlier study
 
 ## Setup
 
