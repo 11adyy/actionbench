@@ -56,7 +56,7 @@ jobs:
         if: always()
         run: bash cloud/v2_worker.sh finalize
       - uses: actions/upload-artifact@v4
-        if: always() && inputs.action != 'smoke'
+        if: always()
         with:
           name: actionbench-state-${{ inputs.campaign }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .cloud-state/state.tar.gz

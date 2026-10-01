@@ -48,6 +48,8 @@ def smoke(cfg:dict,ledger:Ledger,meter,root:Path)->dict:
     output=container.execute(episode,"probe",workspace,["python","/action/main.py"],{},action_dir=package,allow_llm=True)
     row=ledger.db.execute("SELECT state,provider_id FROM calls WHERE episode_id=? ORDER BY rowid LIMIT 1",(episode,)).fetchone()
     if output.get("answer","").strip()!="OK" or not row or row["state"]!="completed" or not row["provider_id"]:
-        raise ValueError("Real graph/model smoke did not return an auditable response")
+        summary={"graph_output":str(output)[:160],"request_state":row["state"] if row else None,
+                 "has_provider_id":bool(row and row["provider_id"])}
+        raise ValueError("Real graph/model smoke did not return an auditable response: "+json.dumps(summary))
     ledger.set_episode(episode,"completed",answer=json.dumps(output))
     return {"passed":True,"provider_id":row["provider_id"],"graph_output":output}
