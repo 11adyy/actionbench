@@ -6,11 +6,28 @@ from pathlib import Path
 
 from actionbench.v2_data import grade, prepare_custom
 from actionbench.v2_store import Ledger
-from actionbench.v2_runner import _BrokerAdapter
+from actionbench.v2_runner import _BrokerAdapter, validate_script
 from types import SimpleNamespace
 
 
 class V2Tests(unittest.TestCase):
+    def test_controlled_graph_accepts_valid_jsonl_without_sdk_emit(self):
+        script='''import json
+from langgraph.graph import StateGraph, START, END
+from langchain_core.runnables import RunnableLambda
+from action_sdk import ActionContext
+ctx=ActionContext({})
+graph=StateGraph(dict)
+graph.add_node("answer",RunnableLambda(lambda x:x))
+graph.add_edge(START,"answer")
+graph.add_edge("answer",END)
+result=graph.compile().invoke({})
+print(json.dumps({"kind":"result","output":result}))
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"main.py";path.write_text(script)
+            validate_script(path,"script_only")
+
     def test_responses_content_blocks_reach_langgraph_as_text(self):
         class Model:
             def invoke(self,messages):

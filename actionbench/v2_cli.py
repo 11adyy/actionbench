@@ -196,10 +196,25 @@ def main(argv:list[str]|None=None)->int:
                             if len(items)<count:raise ValueError(f"Too few {split} tasks for {family}")
                             chosen+=items[:count]
                         for task in chosen:
-                            for replica in (range(1) if args.command=="canary" else range(cfg["replicas"])):
+                            if args.command=="canary":
+                                skill_family="file_summary" if task["family"]=="qmsum" else task["family"]
+                                candidates=[r for r in range(cfg["replicas"]) if all(
+                                    ledger.package(skill_family,r,kind) and ledger.package(skill_family,r,kind)["status"]=="completed"
+                                    for kind in ("script_only","script_llm"))]
+                                if not candidates:
+                                    raise ValueError(f"No paired generated scripts exist for {skill_family}; preserve creation failures")
+                                replicas=[candidates[0]]
+                            else:replicas=range(cfg["replicas"])
+                            for replica in replicas:
                                 for budget in ([cfg["budgets_usd"][-1]] if args.command=="canary" else cfg["budgets_usd"]):
                                     for kind in ("script_only","script_llm"):
                                         run_episode(cfg,ledger,meter,task,replica,kind,float(budget),root)
+                        if args.command=="canary":
+                            for family in ("file_exploration","file_summary"):
+                                count=ledger.db.execute("""SELECT COUNT(*) FROM calls c JOIN episodes e ON e.id=c.episode_id
+                                    WHERE e.family=? AND e.condition='script_llm' AND e.task_id LIKE '%-development-%'
+                                    AND c.step LIKE 'graph-%' AND c.state='completed' AND c.provider_id IS NOT NULL""",(family,)).fetchone()[0]
+                                if count<1:raise ValueError(f"Natural {family} canary made no completed graph model call")
                     elif args.command=="judge":
                         from .v2_judge import judge_summaries
                         output=judge_summaries(cfg,ledger,manifest)

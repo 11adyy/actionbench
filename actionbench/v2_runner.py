@@ -17,6 +17,7 @@ from deepagents.backends import FilesystemBackend
 from deepagents.profiles import GeneralPurposeSubagentProfile, HarnessProfile, register_harness_profile
 from langchain_core.tools import tool
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.errors import GraphRecursionError
 
 from . import action_sdk
 from .runner import ContainerRunner
@@ -45,15 +46,22 @@ def validate_script(script: Path, kind: str):
     if not any(x.startswith("langchain") for x in imports):raise ValueError("Skill script must use LangChain")
     if "StateGraph(" not in code or ".compile(" not in code or ".invoke(" not in code:
         raise ValueError("Skill script needs an invoked, compiled StateGraph")
-    if "ctx.emit(" not in code:raise ValueError("Skill script must emit a terminal result")
+    emits_jsonl=any(isinstance(node,ast.Dict) and any(isinstance(key,ast.Constant) and key.value=="kind" and
+        isinstance(value,ast.Constant) and value.value=="result" for key,value in zip(node.keys,node.values)) for node in ast.walk(tree))
+    if "ctx.emit(" not in code and not emits_jsonl:
+        raise ValueError("Skill script must emit a terminal result")
     blocked={"deepagents","subprocess","socket","requests","urllib","http","ctypes","openai"}
     if any(x.split(".")[0] in blocked for x in imports):raise ValueError("Skill script imports an unrestricted runtime")
     if any(isinstance(node,ast.While) for node in ast.walk(tree)):
         raise ValueError("Skill graph must be finite; while loops are forbidden")
     if "create_agent(" in code or "create_deep_agent(" in code:
         raise ValueError("A skill graph cannot contain an autonomous agent")
-    if any(isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id in {"eval","exec","compile","__import__"} for node in ast.walk(tree)):
-        raise ValueError("Dynamic execution is forbidden")
+    for node in ast.walk(tree):
+        if isinstance(node,ast.Call) and isinstance(node.func,ast.Name):
+            if node.func.id in {"eval","exec","compile"}:
+                raise ValueError("Dynamic execution is forbidden")
+            if node.func.id=="__import__" and not (len(node.args)==1 and isinstance(node.args[0],ast.Constant) and node.args[0].value in {"sys","json","re","os","pathlib"}):
+                raise ValueError("Dynamic imports are forbidden")
     if kind=="script_only" and any(word in code for word in ("call_llm", "ChatOpenAI", "OPENAI_API_KEY")):
         raise ValueError("Deterministic skill cannot call a model")
     if kind=="script_llm" and "call_llm(" not in code:
@@ -135,7 +143,7 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
         body+=("For a semantic subtask, call ctx.call_llm(prompt, instructions='', max_output_tokens=512) "
                "inside one explicit graph node. This capability uses the same provider key and budget as the outer Deep Agent. ")
     else:body+="Do not call a model or import ChatOpenAI. "
-    files_instruction=("Use write_file to create /SKILL.md with YAML name and description, and /main.py. "
+    files_instruction=("Use write_file to create /main.py first, then /SKILL.md with YAML name and description. "
                        if kind=="script_only" else
                        "The paired /SKILL.md already exists. Read it and create only /main.py; do not edit /SKILL.md. ")
     prompt=(f"Create one reusable {kind} skill for family {family}. " + files_instruction +
@@ -149,7 +157,18 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
             agent=_agent(_model(config,meter),config["provider"]["model"],backend=_backend(destination),checkpointer=saver,
                          system_prompt="You write reusable, compact skills. Use filesystem write_file tools to create the requested files. Do not use subagents.")
             with model_scope(episode,"creator",float(config["creation_budget_usd"])):
-                agent.invoke({"messages":[{"role":"user","content":prompt}]},config={"configurable":{"thread_id":episode},"recursion_limit":16})
+                try:
+                    agent.invoke({"messages":[{"role":"user","content":prompt}]},config={"configurable":{"thread_id":episode},"recursion_limit":24})
+                except GraphRecursionError:
+                    # Some creators keep commenting after writing the files.
+                    # The frozen files still receive full structural checks.
+                    pass
+                if not (destination/"SKILL.md").is_file() or not (destination/"main.py").is_file():
+                    try:
+                        agent.invoke({"messages":[{"role":"user","content":"Finish writing the missing requested files now, then stop."}]},
+                                     config={"configurable":{"thread_id":episode},"recursion_limit":12})
+                    except GraphRecursionError:
+                        pass
         if not (destination/"SKILL.md").is_file() or not (destination/"main.py").is_file():
             raise ValueError("Creator did not write SKILL.md and main.py")
         if paired_skill is not None and (destination/"SKILL.md").read_bytes()!=paired_skill:
