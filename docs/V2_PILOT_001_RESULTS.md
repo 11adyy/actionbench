@@ -1,0 +1,28 @@
+# ActionBench v2 pilot 001: audited exploratory result
+
+This is a completed **exploratory** study of the same Deep Agents skill instructions paired with either a deterministic Python/LangGraph script (`script_only`) or a Python/LangGraph script allowed to make metered model calls (`script_llm`). It does not establish that model-enabled actions are generally better. The older v1 campaigns are separate and remain available as negative/inconclusive evidence.
+
+## Provenance and completeness
+
+- [Pilot workflow](https://github.com/11adyy/actionbench/actions/runs/36812188166), source `ffc6b1793118664792a28f5b4d5f35dbf530f298`, artifact `11140469655`, downloaded ZIP SHA-256 `391a62041840527626233a40191486e0607e0f6711b7c24c64c5da3199fe4470`.
+- Its saved SQLite ledger contains all **324 distinct planned test cells**, each terminal: 233 completed and 91 failed. No call has an unknown outcome. All 1,106 completed provider calls have request IDs. The eight completed package hashes and four byte-identical `SKILL.md` pairs were independently checked against the archive. The pinned dataset was reconstructed and its manifest hash matched the campaign fingerprint (`36793074248a4799ec73dc81e4a86e5760052e12ded11a49ee634fc83e83c479`).
+- The original secondary judge parser failed on Responses API content blocks, leaving 197 judge episodes failed. These failures and their cost remain in the original artifact. [Parser repair `d013eb2`](https://github.com/11adyy/actionbench/commit/d013eb2) created a separate [posthoc judging run](https://github.com/11adyy/actionbench/actions/runs/36816504838) over the **unchanged frozen answers**. Its artifact `11141379294` has ZIP SHA-256 `168c05e62825da7a99de25e55c3be8cbd032ab16f3915ea5d190210794b61589`. All 197 eligible answers received a terminal, condition-blind judgment with a completed provider request ID; none are unknown. The derivative ledger preserves the original failed judgments.
+- The pilot accounted for `$0.12772478` in model calls, including `$0.02382158` for the original failed judge attempts. Posthoc judging added `$0.02380408`. With `$1.569610` conservatively accounted before this pilot, the cumulative total is at most **`$1.72113886`**, below the authorized `$8` ceiling. These are token-price ledger estimates, not a provider billing statement.
+
+## Outcomes
+
+Each family has six held-out tasks, three independently created package replicas and three runtime budgets (`$0.003`, `$0.010`, `$0.030`) in each arm. The table shows mean primary scores **including failed cells as zero**, averaged across budgets; budget-level values are in the archived `report.json`.
+
+| Family | Deterministic script | Model-enabled script | Interpretation |
+| --- | ---: | ---: | --- |
+| File exploration | 0.333 | 0.333 | No observed quality benefit. Two of three package replicas failed creation in both arms; 72 cells consequently lacked a package. |
+| File summary | 0.833 | 1.000 | The model-enabled arm gained 0.167 on the synthetic fact-ID/evidence metric at each budget. Its mean runtime API cost was higher by roughly `$0.000056`–`$0.000105` per cell. |
+| QMSum meeting summary | 0.081–0.089 | 0.115–0.127 | ROUGE-L F1 was descriptively higher by 0.034–0.038, with greater cost. Every exploratory clustered 95% interval crossed zero; only three meetings were independent clusters. |
+
+The model-enabled arm made 18, 54 and 45 completed inner graph calls in test episodes for exploration, file summary and QMSum, respectively. The latter had four terminal failures versus 15 for the deterministic arm, mostly outer-agent recursion-limit failures. The use of generated scripts was therefore observed, not mocked. File-summary scripts were invoked in all 108 cells; QMSum and exploration adoption and failures are detailed in the archived report and ledger.
+
+The repaired, condition-blind **model judge** found a mean paired difference of `0.000` on 54 completed file-summary pairs and `+0.306` on 37 completed QMSum pairs (model-enabled minus deterministic, on a 0–1 rubric scale). These scores are secondary, share model-family biases with the methods under test, and do not override the primary results. A deterministic, outcome-independent hash sample of 19 completed pairs was prepared for two independent blind human reviewers; the selection procedure was defined after the pilot and is therefore exploratory. The review packet and concealed condition key are stored separately in the local audit directory. No human ratings have been collected.
+
+## Paper claim supported now
+
+The implementation demonstrates that a Deep Agents harness can create, freeze and use paired LangGraph skill scripts, meter inner model calls without placing the raw key in containers, resume from durable state, and compare quality and spend on real executions. In this small exploratory pilot, model-enabled scripts improved one structured extraction metric at extra runtime cost, showed an uncertain advantage on QMSum, and showed no advantage for file exploration while package creation was unreliable. A paper must report these failures, the failed first-pass judge, the posthoc repair and the absent human ratings. A general superiority claim or confirmatory statistical claim is **not supported**.
