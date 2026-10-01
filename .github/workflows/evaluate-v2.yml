@@ -1,0 +1,65 @@
+name: Evaluate ActionBench v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [smoke, canary, pilot, resume]
+        required: true
+      campaign:
+        type: string
+        required: true
+      prior_accounted_usd:
+        description: "All earlier accounted API spending, including uncertain reservations"
+        type: string
+        required: true
+        default: "1.38588963"
+      campaign_limit_usd:
+        type: string
+        required: true
+        default: "6.344"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: actionbench-v2-${{ inputs.campaign }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      AB_ACTION: ${{ inputs.action }}
+      AB_CAMPAIGN: ${{ inputs.campaign }}
+      AB_PRIOR: ${{ inputs.prior_accounted_usd }}
+      AB_CEILING: ${{ inputs.campaign_limit_usd }}
+      GH_TOKEN: ${{ github.token }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Restore exact source and state
+        run: bash cloud/v2_worker.sh restore
+      - name: Install frozen runtime
+        run: python -m pip install -e '.[v2]'
+      - name: Run real gate and requested campaign phase
+        run: bash cloud/v2_worker.sh run
+      - name: Save status and report even after failure
+        if: always()
+        run: bash cloud/v2_worker.sh finalize
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.action != 'smoke'
+        with:
+          name: actionbench-state-${{ inputs.campaign }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .cloud-state/state.tar.gz
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
