@@ -46,8 +46,10 @@ def validate_script(script: Path, kind: str):
     if not any(x.startswith("langchain") for x in imports):raise ValueError("Skill script must use LangChain")
     if "StateGraph(" not in code or ".compile(" not in code or ".invoke(" not in code:
         raise ValueError("Skill script needs an invoked, compiled StateGraph")
-    emits_jsonl=any(isinstance(node,ast.Dict) and any(isinstance(key,ast.Constant) and key.value=="kind" and
-        isinstance(value,ast.Constant) and value.value=="result" for key,value in zip(node.keys,node.values)) for node in ast.walk(tree))
+    emits_jsonl=any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=="dumps" and
+        node.args and isinstance(node.args[0],ast.Dict) and any(isinstance(key,ast.Constant) and key.value=="kind" and
+        isinstance(value,ast.Constant) and value.value=="result" for key,value in zip(node.args[0].keys,node.args[0].values))
+        for node in ast.walk(tree))
     if "ctx.emit(" not in code and not emits_jsonl:
         raise ValueError("Skill script must emit a terminal result")
     blocked={"deepagents","subprocess","socket","requests","urllib","http","ctypes","openai"}

@@ -27,6 +27,9 @@ print(json.dumps({"kind":"result","output":result}))
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/"main.py";path.write_text(script)
             validate_script(path,"script_only")
+            path.write_text(script.replace('print(json.dumps({"kind":"result","output":result}))',
+                                           'print(json.dumps({"result":{"kind":"result","output":result}}))'))
+            with self.assertRaises(ValueError):validate_script(path,"script_only")
 
     def test_responses_content_blocks_reach_langgraph_as_text(self):
         class Model:

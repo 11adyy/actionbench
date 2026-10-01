@@ -214,7 +214,11 @@ def main(argv:list[str]|None=None)->int:
                                 count=ledger.db.execute("""SELECT COUNT(*) FROM calls c JOIN episodes e ON e.id=c.episode_id
                                     WHERE e.family=? AND e.condition='script_llm' AND e.task_id LIKE '%-development-%'
                                     AND c.step LIKE 'graph-%' AND c.state='completed' AND c.provider_id IS NOT NULL""",(family,)).fetchone()[0]
-                                if count<1:raise ValueError(f"Natural {family} canary made no completed graph model call")
+                                used=ledger.db.execute("""SELECT COUNT(*) FROM invocations i JOIN episodes e ON e.id=i.episode_id
+                                    WHERE e.family=? AND e.condition='script_llm' AND e.task_id LIKE '%-development-%'
+                                    AND e.status='completed' AND i.state='completed'""",(family,)).fetchone()[0]
+                                if count<1 or used<1:
+                                    raise ValueError(f"Natural {family} canary lacks a completed graph invocation and brokered model call")
                     elif args.command=="judge":
                         from .v2_judge import judge_summaries
                         output=judge_summaries(cfg,ledger,manifest)
