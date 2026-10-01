@@ -5,7 +5,7 @@ on:
     inputs:
       action:
         type: choice
-        options: [smoke, canary, pilot, resume]
+        options: [smoke, canary, pilot, resume, resume-check]
         required: true
       campaign:
         type: string

@@ -8,6 +8,7 @@ from actionbench.v2_data import grade, prepare_custom
 from actionbench.v2_store import Ledger
 from actionbench.v2_runner import _BrokerAdapter, validate_script
 from actionbench.v2_judge import _text_content
+from cloud.v2_resume_guard import signature
 from types import SimpleNamespace
 
 
@@ -82,6 +83,18 @@ print(json.dumps({"kind":"result","output":result}))
             with self.assertRaises(ValueError):ledger.start_invocation("e",0,"changed-input")
             ledger.finish_invocation("e",0,{"answer":1})
             self.assertEqual(ledger.start_invocation("e",0,"input-hash")["state"],"completed")
+
+    def test_resume_guard_detects_new_or_changed_model_calls(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/"db.sqlite3"
+            ledger=Ledger(path,"study",{})
+            before=signature(path)
+            ledger.begin_episode("e","task","files",0,"script_llm",0.01)
+            ledger.reserve("request-1","e","graph",0.001,0.01,0.02)
+            self.assertNotEqual(before,signature(path))
+            ledger.complete("request-1",input_tokens=10,cached_tokens=0,output_tokens=2,actual_usd=0.0001,provider_id="resp-real")
+            self.assertNotEqual(before,signature(path))
+            ledger.close()
 
 
 if __name__=="__main__":unittest.main()
