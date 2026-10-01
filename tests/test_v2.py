@@ -7,6 +7,7 @@ from pathlib import Path
 from actionbench.v2_data import grade, prepare_custom
 from actionbench.v2_store import Ledger
 from actionbench.v2_runner import _BrokerAdapter, validate_script
+from actionbench.v2_judge import _text_content
 from types import SimpleNamespace
 
 
@@ -37,6 +38,10 @@ print(json.dumps({"kind":"result","output":result}))
                 return SimpleNamespace(content=[{"type":"text","text":"OK","phase":"final_answer"}])
         adapter=_BrokerAdapter(Model(),"e",0.01)
         self.assertEqual(adapter.call("e","step","","prompt",16).text,"OK")
+
+    def test_responses_content_blocks_reach_blind_judge_as_json(self):
+        blocks=[{"type":"output_text","text":'{"coverage":3,"factuality":4,"relevance":4,"evidence":2,"reason":"supported"}',"phase":"final_answer"}]
+        self.assertEqual(json.loads(_text_content(blocks))["coverage"],3)
 
     def test_dataset_is_disjoint_and_private_answers_are_not_in_public_task(self):
         with tempfile.TemporaryDirectory() as temp:

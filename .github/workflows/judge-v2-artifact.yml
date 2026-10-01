@@ -1,0 +1,56 @@
+name: Repair ActionBench v2 secondary judge
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_artifact_id:
+        description: Exact archived v2 pilot state artifact ID
+        required: true
+        type: string
+      audit_id:
+        description: Unique label for this derivative audit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install frozen v2 dependencies
+        run: pip install -e '.[v2]'
+      - name: Restore archived pilot and reconstruct its pinned dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_ARTIFACT_ID: ${{ inputs.source_artifact_id }}
+        run: |
+          [[ "$SOURCE_ARTIFACT_ID" =~ ^[0-9]+$ ]]
+          mkdir -p source-state
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID/zip" > source-state.zip
+          unzip -p source-state.zip state.tar.gz | tar -xz -C source-state
+          python - <<'PY'
+          from pathlib import Path
+          from actionbench.v2_data import prepare_custom, add_qmsum
+          prepare_custom(Path('data-v2'))
+          add_qmsum(Path('data-v2'))
+          PY
+      - name: Judge the frozen answers with corrected text decoding
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python cloud/v2_posthoc_judge.py --state source-state --data data-v2 --out posthoc-v2
+      - name: Preserve derivative ledger and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: actionbench-v2-judge-${{ inputs.audit_id }}-${{ github.run_id }}
+          path: posthoc-v2/
+          if-no-files-found: warn
+          retention-days: 90
