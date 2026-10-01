@@ -11,6 +11,16 @@ dependencies = ["certifi>=2024.2.2", "jsonschema>=4.21,<5"]
 
 [project.scripts]
 actionbench = "actionbench.cli:main"
+actionbench-v2 = "actionbench.v2_cli:main"
+
+[project.optional-dependencies]
+v2 = [
+  "deepagents==0.6.12",
+  "langchain==1.4.3",
+  "langchain-openai==1.6.7",
+  "langgraph==1.2.12",
+  "langgraph-checkpoint-sqlite==3.1.1",
+]
 
 [tool.setuptools.packages.find]
 include = ["actionbench*"]
