@@ -127,6 +127,10 @@ def _probe_package(config: dict, ledger: Ledger, manifest: dict, family: str, re
         after=ledger.db.execute("SELECT COUNT(*) FROM calls WHERE episode_id=? AND step LIKE ? AND state='completed' AND provider_id IS NOT NULL",
                                 (episode,f"probe-{revision}:%")).fetchone()[0]
         if after<=before:raise ValueError("LLM graph did not complete a real brokered model call")
+    reference=json.loads((data_root/example["reference"]).read_text())
+    validation=grade(family,json.dumps(output),reference,task_path.parent/"files")
+    if validation["primary"]<=0:
+        raise ValueError(f"Graph ran but failed the development-task quality check: {validation}. Inspect the files' contents, not only their names; parse the project or case identifier without trailing punctuation.")
     return output
 
 
@@ -161,7 +165,11 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
         if item["family"] not in allowed or item["split"]!="development":continue
         task=json.loads((data_root/item["task"]).read_text())
         files=data_root/item["task"].replace("task.json","files")
-        snippets={p.relative_to(files).as_posix():p.read_text()[:1200] for p in list(sorted(files.rglob("*.txt")))[:3]}
+        all_files=list(sorted(files.rglob("*.txt")))
+        target=re.search(r"\b(?:project-\d+|[A-Z]\d{3,})\b",task["prompt"])
+        relevant=[p for p in all_files if target and target.group().casefold() in p.read_text(errors="replace").casefold()]
+        selected=list(dict.fromkeys(all_files[:2]+relevant[:1]))[:3]
+        snippets={p.relative_to(files).as_posix():p.read_text(errors="replace")[:1200] for p in selected}
         examples.append({"prompt":task["prompt"],"sample_files":snippets})
         if len(examples)==3:break
     episode=f"creation:{family}:{replica}:{kind}"
@@ -182,7 +190,8 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
     else:body+="Do not call a model or import ChatOpenAI. "
     body+=("The output object must have owner, decision, evidence_paths. " if family=="file_exploration" else
            "The output object must have summary, fact_ids, evidence_paths. ")
-    files_instruction=("Use write_file to create /main.py first, then /SKILL.md with YAML name and description. "
+    slug=family.replace("_","-")
+    files_instruction=(f"Use write_file to create /main.py first, then /SKILL.md with YAML name: {slug} and description. "
                        if kind=="script_only" else
                        "The paired /SKILL.md already exists. Read it and create only /main.py; do not edit /SKILL.md. ")
     prompt=(f"Create one reusable {kind} skill for family {family}. " + files_instruction +
@@ -217,8 +226,8 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
                             raise ValueError("Creator changed the paired skill instructions")
                         validate_script(destination/"main.py",kind)
                         (destination/"action_sdk.py").write_text(Path(action_sdk.__file__).read_text())
-                        if not re.search(r"(?m)^name:\s*",(destination/"SKILL.md").read_text()):
-                            raise ValueError("Skill YAML frontmatter must name the skill")
+                        if not re.search(r"(?m)^name:\s*[a-z0-9]+(?:-[a-z0-9]+)*\s*$",(destination/"SKILL.md").read_text()):
+                            raise ValueError("Skill YAML name must be lowercase words with single hyphens, e.g. file-exploration")
                         _probe_package(config,ledger,manifest,family,replica,kind,destination,root,episode,revision)
                         last_error=None
                         break
@@ -300,13 +309,12 @@ def run_episode(config:dict,ledger:Ledger,meter:Meter,task:dict,replica:int,kind
     container=ContainerRunner(docker_config,adapter)
 
     @tool
-    def run_skill(input_json: str) -> str:
-        """Run the frozen skill's finite LangGraph over the task files. Input is a JSON object string."""
+    def run_skill(query: str) -> str:
+        """Run the frozen skill's finite LangGraph on /workspace/files for this query."""
         nonlocal ordinal
         with invocation_lock:
-            try: args=json.loads(input_json)
-            except ValueError as exc:raise ValueError("Skill input must be JSON") from exc
-            if not isinstance(args,dict):raise ValueError("Skill input must be an object")
+            if not isinstance(query,str) or not query.strip():raise ValueError("Skill query must be nonempty text")
+            args={"query":query,"task":query,"files_dir":"/workspace/files"}
             current=ordinal;ordinal+=1
             input_hash=digest(args)
             saved=ledger.start_invocation(episode,current,input_hash)
@@ -319,7 +327,7 @@ def run_episode(config:dict,ledger:Ledger,meter:Meter,task:dict,replica:int,kind
             return json.dumps(output,ensure_ascii=False)
 
     prompt=(task_data["prompt"]+"\nRead the relevant skill instructions under /skills/task-skill/SKILL.md. "
-            "You may call run_skill with a JSON object containing the task and relevant paths. "
+            "You may call run_skill with the task query as plain text. "
             "Answer only with the requested JSON. Files are under /files and /workspace/files in the execution tool.")
     start=time.monotonic()
     ledger.set_episode(episode,"running")
