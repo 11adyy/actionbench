@@ -171,7 +171,12 @@ class _BrokerAdapter:
         if episode_id!=self.episode:raise ValueError("Wrong episode for graph model call")
         with model_scope(episode_id,step,self.limit):
             result=self.model.invoke([("system",instructions or "Follow the task"),("human",prompt)])
-        return SimpleNamespace(text=result.content if isinstance(result.content,str) else str(result.content))
+        content=result.content
+        if isinstance(content,list):
+            content="\n".join(part.get("text","") for part in content if isinstance(part,dict) and part.get("type") in ("text","output_text"))
+        if not isinstance(content,str) or not content:
+            raise ValueError("Model response contains no text for the skill graph")
+        return SimpleNamespace(text=content)
 
 
 def run_episode(config:dict,ledger:Ledger,meter:Meter,task:dict,replica:int,kind:str,budget:float,root:Path):

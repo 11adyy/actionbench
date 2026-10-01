@@ -6,9 +6,18 @@ from pathlib import Path
 
 from actionbench.v2_data import grade, prepare_custom
 from actionbench.v2_store import Ledger
+from actionbench.v2_runner import _BrokerAdapter
+from types import SimpleNamespace
 
 
 class V2Tests(unittest.TestCase):
+    def test_responses_content_blocks_reach_langgraph_as_text(self):
+        class Model:
+            def invoke(self,messages):
+                return SimpleNamespace(content=[{"type":"text","text":"OK","phase":"final_answer"}])
+        adapter=_BrokerAdapter(Model(),"e",0.01)
+        self.assertEqual(adapter.call("e","step","","prompt",16).text,"OK")
+
     def test_dataset_is_disjoint_and_private_answers_are_not_in_public_task(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)/"data"
