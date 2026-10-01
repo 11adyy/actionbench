@@ -69,6 +69,9 @@ class Meter(BaseCallbackHandler):
             return
         actual = ((input_tokens-cached)*self.input_price + cached*self.cached_price + output_tokens*self.output_price) / 1_000_000
         self.ledger.complete(call_id,input_tokens=input_tokens,cached_tokens=cached,output_tokens=output_tokens,actual_usd=actual,provider_id=message.id or response.llm_output.get("id") if response.llm_output else message.id)
+        metadata=message.response_metadata or {}
+        if metadata.get("status") not in (None,"completed"):
+            raise ValueError(f"Provider response was {metadata.get('status')}: {metadata.get('incomplete_details')}")
 
     def on_llm_error(self, error, *, run_id, **kwargs):
         call_id = self.pending.pop(str(run_id), None)

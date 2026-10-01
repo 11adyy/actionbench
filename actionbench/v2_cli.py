@@ -179,6 +179,9 @@ def main(argv:list[str]|None=None)->int:
                     from .v2_runner import create_skill,run_episode
                     meter=meter_for(cfg,ledger)
                     if args.command=="create-skills":
+                        # A complete Python graph often needs several thousand
+                        # output tokens in one write_file tool call.
+                        meter.max_output_tokens=8192
                         for family in ("file_exploration","file_summary"):
                             for replica in range(cfg["replicas"]):
                                 for kind in ("script_only","script_llm"):

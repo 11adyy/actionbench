@@ -99,7 +99,12 @@ def create_skill(config: dict, ledger: Ledger, meter: Meter, manifest: dict, fam
     if kind=="script_llm":
         base=ledger.package(family,replica,"script_only")
         if not base or base["status"]!="completed":
-            raise ValueError("Paired deterministic skill must be created first")
+            episode=f"creation:{family}:{replica}:{kind}"
+            ledger.begin_episode(episode,episode,family,replica,kind,float(config["creation_budget_usd"]))
+            error="Paired deterministic skill was unavailable"
+            ledger.save_package(family,replica,kind,"failed",None,None,error)
+            ledger.set_episode(episode,"failed",error=error)
+            return None
         source=Path(base["path"])
         if tree_hash(source)!=base["sha256"]:raise ValueError("Paired skill hash changed")
         paired_skill=(source/"SKILL.md").read_bytes()
