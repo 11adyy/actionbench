@@ -18,7 +18,9 @@ def digest(value: object) -> str:
 class Ledger:
     def __init__(self, path: Path, campaign: str, config: dict):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, isolation_level=None, timeout=30)
+        # Deep Agents executes tools in worker threads; the coordinator remains
+        # single-process, and SQLite still serializes write transactions.
+        self.db = sqlite3.connect(path, isolation_level=None, timeout=30, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -209,6 +210,7 @@ def run_episode(config:dict,ledger:Ledger,meter:Meter,task:dict,replica:int,kind
     backend=_backend(workspace)
     model=_model(config,meter)
     ordinal=0
+    invocation_lock=threading.RLock()
     adapter=_BrokerAdapter(model,episode,budget)
     docker_config=SimpleNamespace(execution=SimpleNamespace(**config["execution"]))
     container=ContainerRunner(docker_config,adapter)
@@ -217,19 +219,20 @@ def run_episode(config:dict,ledger:Ledger,meter:Meter,task:dict,replica:int,kind
     def run_skill(input_json: str) -> str:
         """Run the frozen skill's finite LangGraph over the task files. Input is a JSON object string."""
         nonlocal ordinal
-        try: args=json.loads(input_json)
-        except ValueError as exc:raise ValueError("Skill input must be JSON") from exc
-        if not isinstance(args,dict):raise ValueError("Skill input must be an object")
-        current=ordinal;ordinal+=1
-        input_hash=digest(args)
-        saved=ledger.start_invocation(episode,current,input_hash)
-        if saved:
-            if saved["state"]=="completed":return saved["output_json"]
-            raise ValueError("Skill invocation outcome unknown; inspect before resume")
-        output=container.execute(episode,f"graph-{current}",workspace,["python","/action/main.py"],args,
-                                 action_dir=package_dir,allow_llm=kind=="script_llm")
-        ledger.finish_invocation(episode,current,output)
-        return json.dumps(output,ensure_ascii=False)
+        with invocation_lock:
+            try: args=json.loads(input_json)
+            except ValueError as exc:raise ValueError("Skill input must be JSON") from exc
+            if not isinstance(args,dict):raise ValueError("Skill input must be an object")
+            current=ordinal;ordinal+=1
+            input_hash=digest(args)
+            saved=ledger.start_invocation(episode,current,input_hash)
+            if saved:
+                if saved["state"]=="completed":return saved["output_json"]
+                raise ValueError("Skill invocation outcome unknown; inspect before resume")
+            output=container.execute(episode,f"graph-{current}",workspace,["python","/action/main.py"],args,
+                                     action_dir=package_dir,allow_llm=kind=="script_llm")
+            ledger.finish_invocation(episode,current,output)
+            return json.dumps(output,ensure_ascii=False)
 
     prompt=(task_data["prompt"]+"\nRead the relevant skill instructions under /skills/task-skill/SKILL.md. "
             "You may call run_skill with a JSON object containing the task and relevant paths. "
